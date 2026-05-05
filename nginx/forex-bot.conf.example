@@ -1,0 +1,56 @@
+# Forex AI Bot — exemplo de server block para Nginx.
+# Copia para /etc/nginx/sites-available/forex-bot e cria o symlink em
+# /etc/nginx/sites-enabled/. Substitui o server_name pelo teu domínio
+# ou IP. Ajusta o root para onde colocaste/symlink-aste a pasta web/.
+
+server {
+    listen 80;
+    listen [::]:80;
+
+    # Substitui pelo teu domínio (ex: forex.example.com) ou usa _ para "qualquer host".
+    server_name _;
+
+    root /var/www/forex-bot;
+    index index.html;
+
+    # Sem listagem de directório.
+    autoindex off;
+
+    # Esconder ficheiros sensíveis caso alguém faça upload por engano.
+    location ~ /\.(env|git|gitignore|claude) {
+        deny all;
+        return 404;
+    }
+    location ~* \.(db|jsonl|log|sqlite|sqlite3)$ {
+        deny all;
+        return 404;
+    }
+
+    # data.json não pode ser cacheado pelo browser, ou o auto-refresh fica preso.
+    location = /data.json {
+        add_header Cache-Control "no-store, max-age=0";
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+
+        # --- Basic Auth opcional ----------------------------------------
+        # Para proteger acesso público, descomenta as duas linhas abaixo
+        # e cria o ficheiro de credenciais com:
+        #   sudo apt install apache2-utils
+        #   sudo htpasswd -c /etc/nginx/.forex-bot.htpasswd lireupt
+        # auth_basic           "Forex AI Bot";
+        # auth_basic_user_file /etc/nginx/.forex-bot.htpasswd;
+        # ---------------------------------------------------------------
+    }
+
+    # Logs por site (opcional — Nginx default já regista em /var/log/nginx/).
+    access_log /var/log/nginx/forex-bot.access.log;
+    error_log  /var/log/nginx/forex-bot.error.log warn;
+}
+
+# --- HTTPS via certbot (recomendado se expuseres na internet) -----------
+# sudo apt install certbot python3-certbot-nginx
+# sudo certbot --nginx -d forex.example.com
+# O certbot adiciona automaticamente um bloco listen 443 ssl + redirect.

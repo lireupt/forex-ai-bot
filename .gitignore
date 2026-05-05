@@ -1,0 +1,13 @@
+.env
+venv/
+__pycache__/
+*.pyc
+*.db
+*.sqlite
+*.sqlite3
+
+# Runtime artifacts (gerados pelo bot, não versionar)
+logs/
+data/
+web/data.json
+web/data.json.tmp

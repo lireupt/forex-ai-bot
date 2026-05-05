@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Forex AI Bot — dashboard</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #161a22;
+      --panel-2: #1d222c;
+      --border: #2a313d;
+      --text: #e6e9ef;
+      --muted: #8a93a3;
+      --buy: #2ec27e;
+      --sell: #ed4245;
+      --neutral: #8a93a3;
+      --warn: #f5a623;
+      --danger: #ed4245;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+        Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    header {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+    header .meta { color: var(--muted); font-size: 12px; }
+    main { padding: 18px 24px 48px 24px; max-width: 1280px; margin: 0 auto; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 14px 12px 14px;
+    }
+    .card .label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 6px;
+    }
+    .card .value { font-size: 22px; font-weight: 600; }
+    .card .sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
+
+    .accent-buy { color: var(--buy); }
+    .accent-sell { color: var(--sell); }
+    .accent-neutral { color: var(--neutral); }
+    .accent-warn { color: var(--warn); }
+    .accent-danger { color: var(--danger); }
+
+    section.table-wrap {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    section.table-wrap h2 {
+      font-size: 13px;
+      margin: 0;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      padding: 9px 10px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: var(--panel-2);
+    }
+    tbody tr:hover { background: var(--panel-2); }
+    td.reason { white-space: normal; max-width: 360px; color: var(--muted); font-size: 12px; }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+    }
+    .pill.BUY { background: rgba(46, 194, 126, 0.15); color: var(--buy); }
+    .pill.SELL { background: rgba(237, 66, 69, 0.15); color: var(--sell); }
+    .pill.NEUTRAL { background: rgba(138, 147, 163, 0.15); color: var(--neutral); }
+    .pill.blocked { background: rgba(245, 166, 35, 0.15); color: var(--warn); }
+    .pill.allowed { background: rgba(46, 194, 126, 0.15); color: var(--buy); }
+    .pill.event { background: rgba(237, 66, 69, 0.15); color: var(--danger); }
+
+    .vol-low { color: var(--muted); }
+    .vol-normal { color: var(--text); }
+    .vol-high { color: var(--warn); font-weight: 600; }
+    .vol-unknown { color: var(--muted); font-style: italic; }
+
+    .empty {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .error-banner {
+      background: rgba(237, 66, 69, 0.12);
+      border: 1px solid rgba(237, 66, 69, 0.4);
+      color: #ffb1b3;
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Forex AI Bot — dashboard</h1>
+    <div class="meta">
+      <span id="generated">a carregar…</span>
+      &nbsp;·&nbsp;
+      <span id="source"></span>
+      &nbsp;·&nbsp;
+      auto-refresh 60s
+    </div>
+  </header>
+
+  <main>
+    <div id="error" class="error-banner" style="display:none;"></div>
+
+    <div class="cards" id="cards"></div>
+
+    <section class="table-wrap">
+      <h2>Decisões recentes</h2>
+      <div id="table-host">
+        <div class="empty">a carregar…</div>
+      </div>
+    </section>
+
+    <p class="footer">
+      Dados gerados estaticamente por <code>scripts/export_logs.py</code>.
+      Nada aqui é uma recomendação financeira — apenas paper trading.
+    </p>
+  </main>
+
+  <script>
+    (function () {
+      const REFRESH_MS = 60 * 1000;
+      const DATA_URL = "data.json";
+
+      const $ = (id) => document.getElementById(id);
+
+      function fmt(value, fallback) {
+        if (value === null || value === undefined || value === "") return fallback || "—";
+        return value;
+      }
+
+      function fmtNumber(value, digits) {
+        if (value === null || value === undefined || value === "") return "—";
+        const n = Number(value);
+        if (Number.isNaN(n)) return "—";
+        return n.toFixed(digits == null ? 2 : digits);
+      }
+
+      function fmtTime(iso) {
+        if (!iso) return "—";
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso;
+        const pad = (n) => String(n).padStart(2, "0");
+        return (
+          d.getFullYear() +
+          "-" +
+          pad(d.getMonth() + 1) +
+          "-" +
+          pad(d.getDate()) +
+          " " +
+          pad(d.getHours()) +
+          ":" +
+          pad(d.getMinutes())
+        );
+      }
+
+      function pill(value, extra) {
+        const v = (value || "NEUTRAL").toString();
+        const cls = extra ? `pill ${v} ${extra}` : `pill ${v}`;
+        return `<span class="${cls}">${v}</span>`;
+      }
+
+      function renderCards(summary) {
+        if (!summary) return;
+        const cards = [
+          { label: "Total exportado", value: summary.total ?? 0 },
+          {
+            label: "Combinado BUY/SELL/NEUTRAL",
+            value: `${summary.buy ?? 0} / ${summary.sell ?? 0} / ${summary.neutral ?? 0}`,
+            sub: "regra estrita 3/3",
+          },
+          {
+            label: "Shadow BUY/SELL/NEUTRAL",
+            value: `${summary.shadow_buy ?? 0} / ${summary.shadow_sell ?? 0} / ${summary.shadow_neutral ?? 0}`,
+            sub: "regra 2/3",
+          },
+          {
+            label: "Trades simulados",
+            value: `${summary.allowed ?? 0}`,
+            sub: `bloqueados: ${summary.blocked ?? 0}`,
+            accent: (summary.allowed ?? 0) > 0 ? "accent-buy" : "accent-warn",
+          },
+          {
+            label: "Confiança média",
+            value: `${summary.average_confidence ?? 0}%`,
+          },
+          {
+            label: "Origem dos dados",
+            value: summary.source || "—",
+            sub: "sqlite preferido",
+          },
+        ];
+        $("cards").innerHTML = cards
+          .map((c) => {
+            const sub = c.sub ? `<div class="sub">${c.sub}</div>` : "";
+            const accent = c.accent ? ` ${c.accent}` : "";
+            return `<div class="card"><div class="label">${c.label}</div><div class="value${accent}">${c.value}</div>${sub}</div>`;
+          })
+          .join("");
+      }
+
+      function renderTable(decisions) {
+        if (!decisions || decisions.length === 0) {
+          $("table-host").innerHTML = '<div class="empty">Sem decisões registadas ainda.</div>';
+          return;
+        }
+
+        const rows = decisions
+          .slice()
+          .reverse()
+          .map((d) => {
+            const event = d.dangerous_event_nearby
+              ? `<span class="pill event" title="${(d.dangerous_event_reason || "").replace(/"/g, "&quot;")}">evento</span>`
+              : "";
+            const tradeCell = d.trade_allowed
+              ? '<span class="pill allowed">simulado</span>'
+              : '<span class="pill blocked">bloqueado</span>';
+            const reasonCell = d.trade_allowed
+              ? ""
+              : `<td class="reason">${fmt(d.block_reason, "—")}</td>`;
+            const reasonHeader = ""; // omitted — we render reason inside the trade cell
+            const volClass = `vol-${d.volatility_level || "unknown"}`;
+
+            return `
+              <tr>
+                <td>${fmtTime(d.timestamp)}</td>
+                <td>${fmt(d.pair, "—")} <span style="color:var(--muted)">${fmt(d.timeframe, "")}</span></td>
+                <td>${pill(d.ai_signal)}</td>
+                <td>${pill(d.technical_signal)}</td>
+                <td>${pill(d.shadow_technical_signal)}</td>
+                <td>${pill(d.combined_signal)}</td>
+                <td>${d.confidence ?? 0}%</td>
+                <td>${tradeCell} ${event}</td>
+                <td class="reason">${d.trade_allowed ? "" : fmt(d.block_reason, "")}</td>
+                <td>${fmtNumber(d.current_price, 5)}</td>
+                <td><span class="${volClass}">${fmtNumber(d.atr_pips, 1)} pips</span></td>
+              </tr>
+            `;
+          })
+          .join("");
+
+        $("table-host").innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp UTC</th>
+                <th>Par</th>
+                <th>IA</th>
+                <th>Técnica</th>
+                <th>Shadow</th>
+                <th>Combinado</th>
+                <th>Conf.</th>
+                <th>Trade</th>
+                <th>Motivo / evento</th>
+                <th>Preço</th>
+                <th>ATR</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `;
+      }
+
+      async function load() {
+        try {
+          const res = await fetch(DATA_URL + "?_=" + Date.now(), { cache: "no-store" });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const payload = await res.json();
+          const summary = payload.summary || {};
+          const decisions = Array.isArray(payload.decisions) ? payload.decisions : [];
+
+          renderCards(summary);
+          renderTable(decisions);
+
+          $("generated").textContent = "atualizado " + fmtTime(summary.generated_at);
+          $("source").textContent = "fonte: " + (summary.source || "—");
+          $("error").style.display = "none";
+        } catch (err) {
+          const banner = $("error");
+          banner.textContent =
+            "Falha ao carregar data.json — corre `python scripts/export_logs.py` (" +
+            err.message +
+            ")";
+          banner.style.display = "block";
+        }
+      }
+
+      load();
+      setInterval(load, REFRESH_MS);
+    })();
+  </script>
+</body>
+</html>
