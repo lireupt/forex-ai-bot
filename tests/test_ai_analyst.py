@@ -110,6 +110,11 @@ class TestAnalyseFallback:
         result = ai_analyst.analyse([], [], "EUR/USD")
         assert result["provider"] == "groq"
 
+    def test_fallback_records_model_version(self, monkeypatch):
+        monkeypatch.setenv("AI_PROVIDER", "groq")
+        result = ai_analyst.analyse([], [], "EUR/USD")
+        assert result["model_version"] == ai_analyst.model_version_for_provider("groq")
+
 
 class TestModelVersion:
     def test_groq_returns_groq_model(self):

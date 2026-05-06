@@ -73,6 +73,24 @@ def _parse_features_snapshot(value):
     return {}
 
 
+def _first_text(row, *keys):
+    for key in keys:
+        value = row.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _model_version(row):
+    explicit = row.get("ai_model_version") or row.get("model_version") or row.get("model")
+    if explicit:
+        return str(explicit)
+    provider = row.get("provider") or row.get("ai_provider")
+    if provider:
+        return str(provider)
+    return "unknown"
+
+
 def _normalise(row, paper_trade_lookup=None):
     atr_pips = row.get("atr_pips")
     paper_trade = None
@@ -104,9 +122,9 @@ def _normalise(row, paper_trade_lookup=None):
         "dangerous_event_reason": row.get("dangerous_event_reason") or "",
         "ai_score": _coerce_float(row.get("ai_score")),
         "ai_confidence_score": _coerce_float(row.get("ai_confidence_score")),
-        "ai_reason": row.get("ai_reason") or "",
+        "ai_reason": _first_text(row, "ai_reason", "reasoning", "reason", "explanation", "analysis"),
         "ai_features_snapshot": _parse_features_snapshot(row.get("ai_features_snapshot")),
-        "ai_model_version": row.get("ai_model_version") or "unknown",
+        "ai_model_version": _model_version(row),
         "technical_score": _coerce_float(row.get("technical_score")),
         "technical_reason": row.get("technical_reason") or "",
         "shadow_score": _coerce_float(row.get("shadow_score")),

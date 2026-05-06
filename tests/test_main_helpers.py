@@ -119,6 +119,32 @@ class TestBuildFeaturesSnapshot:
         assert snap["recent_change_pct"] is None
 
 
+class TestAIObservability:
+    def test_ai_reason_prefers_reasoning(self):
+        reason = main._ai_reason(
+            {"signal": "BUY", "confidence": 62, "reasoning": "Fundamental e técnico alinhados."},
+            {"reasoning": "combined"},
+        )
+        assert reason == "Fundamental e técnico alinhados."
+
+    def test_ai_reason_accepts_legacy_reason_field(self):
+        reason = main._ai_reason({"signal": "SELL", "confidence": 55, "reason": "Dólar forte."})
+        assert reason == "Dólar forte."
+
+    def test_ai_reason_never_empty_for_new_decisions(self):
+        reason = main._ai_reason({"signal": "NEUTRAL", "confidence": 0, "risk_level": "HIGH"})
+        assert "NEUTRAL" in reason
+        assert "raciocínio detalhado" in reason
+
+    def test_ai_model_version_prefers_explicit_model(self):
+        version = main._ai_model_version({"provider": "groq", "model_version": "groq:test-model"}, "claude")
+        assert version == "groq:test-model"
+
+    def test_ai_model_version_falls_back_to_provider(self):
+        version = main._ai_model_version({"provider": "groq"}, "claude")
+        assert version.startswith("groq:")
+
+
 class TestBuildPaperTrade:
     def test_buy_with_atr(self):
         created_at = datetime(2026, 5, 6, 19, 0, tzinfo=timezone.utc)

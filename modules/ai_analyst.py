@@ -124,6 +124,7 @@ def _fallback(provider, error_msg):
         "risk_level": "HIGH",
         "hold_off": True,
         "provider": provider,
+        "model_version": model_version_for_provider(provider),
     }
 
 
@@ -204,6 +205,7 @@ def analyse(news, events, pair="EUR/USD", technical=None):
         result = json.loads(_strip_json_fences(raw))
         _validate(result)
         result["provider"] = provider
+        result["model_version"] = model_version_for_provider(provider)
         return result
 
     except json.JSONDecodeError as e:

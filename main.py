@@ -496,6 +496,35 @@ def _build_features_snapshot(technical_result, candles_df, ai_result):
     return snapshot
 
 
+def _ai_reason(ai_result, combined=None):
+    for key in ("reasoning", "reason", "explanation", "analysis"):
+        value = ai_result.get(key)
+        if value:
+            return str(value).strip()
+
+    if combined:
+        value = combined.get("reasoning")
+        if value:
+            return str(value).strip()
+
+    signal = ai_result.get("signal") or "NEUTRAL"
+    confidence = ai_result.get("confidence")
+    risk = ai_result.get("risk_level")
+    parts = [f"IA devolveu {signal}"]
+    if confidence is not None:
+        parts.append(f"com confiança {confidence}%")
+    if risk:
+        parts.append(f"e risco {risk}")
+    return " ".join(parts) + ". A resposta não incluiu raciocínio detalhado."
+
+
+def _ai_model_version(ai_result, provider):
+    explicit = ai_result.get("model_version") or ai_result.get("model")
+    if explicit:
+        return str(explicit)
+    return model_version_for_provider(ai_result.get("provider") or provider)
+
+
 def _volatility_label(atr_pips):
     if atr_pips is None:
         return "unknown"
@@ -705,11 +734,7 @@ def _build_decision_entry(
 
     ai_features_snapshot = _build_features_snapshot(technical_result, candles_df, ai_result)
 
-    ai_reason = (
-        ai_result.get("reasoning")
-        or combined.get("reasoning")
-        or "(sem raciocínio devolvido pela IA)"
-    )
+    ai_reason = _ai_reason(ai_result, combined)
 
     combined_reason = _build_combined_reason(
         ai_result, technical_result, combined, score_combined_signal,
@@ -764,9 +789,7 @@ def _build_decision_entry(
         "ai_confidence_score": round(scoring.confidence_to_unit(ai_result.get("confidence")), 4),
         "ai_reason": ai_reason,
         "ai_features_snapshot": ai_features_snapshot,
-        "ai_model_version": model_version_for_provider(
-            ai_result.get("provider") or provider
-        ),
+        "ai_model_version": _ai_model_version(ai_result, provider),
         "technical_score": round(technical_score, 4),
         "shadow_score": round(shadow_score, 4),
         "combined_score": combined_score,
