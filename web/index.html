@@ -74,6 +74,7 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       overflow: hidden;
+      margin-bottom: 24px;
     }
     section.table-wrap h2 {
       font-size: 13px;
@@ -83,6 +84,30 @@
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    section.table-wrap .filters {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    section.table-wrap .filters button {
+      background: var(--panel-2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      cursor: pointer;
+      letter-spacing: 0.4px;
+      text-transform: none;
+    }
+    section.table-wrap .filters button.active {
+      color: var(--text);
+      background: rgba(46, 194, 126, 0.15);
+      border-color: rgba(46, 194, 126, 0.4);
     }
     table { width: 100%; border-collapse: collapse; }
     th, td {
@@ -101,7 +126,7 @@
       background: var(--panel-2);
     }
     tbody tr:hover { background: var(--panel-2); }
-    td.reason { white-space: normal; max-width: 360px; color: var(--muted); font-size: 12px; }
+    td.reason { white-space: normal; max-width: 280px; color: var(--muted); font-size: 12px; }
 
     .pill {
       display: inline-block;
@@ -117,6 +142,10 @@
     .pill.blocked { background: rgba(245, 166, 35, 0.15); color: var(--warn); }
     .pill.allowed { background: rgba(46, 194, 126, 0.15); color: var(--buy); }
     .pill.event { background: rgba(237, 66, 69, 0.15); color: var(--danger); }
+    .pill.win { background: rgba(46, 194, 126, 0.15); color: var(--buy); }
+    .pill.loss { background: rgba(237, 66, 69, 0.15); color: var(--sell); }
+    .pill.expired { background: rgba(138, 147, 163, 0.15); color: var(--muted); }
+    .pill.open { background: rgba(245, 166, 35, 0.15); color: var(--warn); }
 
     .vol-low { color: var(--muted); }
     .vol-normal { color: var(--text); }
@@ -142,6 +171,184 @@
       margin-bottom: 16px;
       font-size: 12px;
     }
+
+    .details-btn {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      letter-spacing: 0.4px;
+    }
+    .details-btn:hover {
+      color: var(--text);
+      border-color: var(--muted);
+    }
+
+    .modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: none;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 32px 16px;
+      z-index: 100;
+      overflow-y: auto;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: 100%;
+      max-width: 760px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+    }
+    .modal header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      padding: 14px 18px;
+    }
+    .modal header h3 { margin: 0; font-size: 14px; font-weight: 600; }
+    .modal header .close {
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 4px 10px; border-radius: 6px;
+      cursor: pointer; font-size: 12px;
+    }
+    .modal section.modal-section {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal section.modal-section:last-child { border-bottom: none; }
+    .modal section.modal-section h4 {
+      margin: 0 0 8px 0;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      font-weight: 600;
+    }
+    .kv {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 4px 12px;
+      font-size: 12px;
+    }
+    .kv .k { color: var(--muted); }
+    .kv .v { color: var(--text); word-break: break-word; }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 4px 16px;
+      font-size: 12px;
+    }
+    pre.candles {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 11px;
+      overflow-x: auto;
+      color: var(--text);
+      margin: 0;
+    }
+
+    .score-bar {
+      display: inline-block;
+      width: 80px;
+      height: 6px;
+      background: var(--panel-2);
+      border-radius: 3px;
+      vertical-align: middle;
+      position: relative;
+      margin-right: 6px;
+    }
+    .score-bar .fill {
+      position: absolute;
+      top: 0; bottom: 0;
+      background: var(--buy);
+      border-radius: 3px;
+    }
+    .score-bar .fill.neg { background: var(--sell); }
+
+    .gate-status {
+      display: inline-block;
+      padding: 4px 14px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    .gate-status.go {
+      background: rgba(46, 194, 126, 0.18);
+      color: var(--buy);
+      border: 1px solid rgba(46, 194, 126, 0.5);
+    }
+    .gate-status.no_go {
+      background: rgba(237, 66, 69, 0.18);
+      color: var(--sell);
+      border: 1px solid rgba(237, 66, 69, 0.5);
+    }
+    .gate-status.partial {
+      background: rgba(245, 166, 35, 0.18);
+      color: var(--warn);
+      border: 1px solid rgba(245, 166, 35, 0.5);
+    }
+    .gates-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 8px;
+      padding: 12px 16px;
+    }
+    .gate-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: var(--panel-2);
+      border-radius: 6px;
+      border-left: 3px solid var(--border);
+      font-size: 12px;
+    }
+    .gate-row.pass { border-left-color: var(--buy); }
+    .gate-row.fail { border-left-color: var(--sell); }
+    .gate-row.insufficient { border-left-color: var(--muted); opacity: 0.7; }
+    .gate-row .label { color: var(--muted); }
+    .gate-row .value { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .gate-row .value.pass { color: var(--buy); }
+    .gate-row .value.fail { color: var(--sell); }
+    .gate-row .value.insufficient { color: var(--muted); font-style: italic; }
+    .splits-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+      padding: 0 16px 16px 16px;
+    }
+    .split-card {
+      background: var(--panel-2);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 12px;
+    }
+    .split-card .split-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .split-card .split-stats { color: var(--muted); font-size: 11px; }
+    .gate-history {
+      padding: 0 16px 16px 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
@@ -162,17 +369,59 @@
     <div class="cards" id="cards"></div>
 
     <section class="table-wrap">
-      <h2>Decisões recentes</h2>
+      <h2>
+        Decisões recentes
+      </h2>
       <div id="table-host">
         <div class="empty">a carregar…</div>
       </div>
     </section>
 
+    <section class="table-wrap">
+      <h2>
+        Paper trades
+        <div class="filters" id="paper-filters">
+          <button class="active" data-filter="all">todos</button>
+          <button data-filter="ai_only">só IA</button>
+          <button data-filter="combined">combinado</button>
+          <button data-filter="BUY">BUY</button>
+          <button data-filter="SELL">SELL</button>
+        </div>
+      </h2>
+      <div class="cards" id="paper-cards" style="margin: 12px 16px 4px 16px;"></div>
+      <div id="paper-table-host">
+        <div class="empty">a carregar…</div>
+      </div>
+    </section>
+
+    <section class="table-wrap">
+      <h2>
+        Validation gates
+        <span id="gates-status" class="gate-status partial">—</span>
+      </h2>
+      <div id="gates-grid" class="gates-grid">
+        <div class="empty">a carregar…</div>
+      </div>
+      <div id="gates-splits" class="splits-grid"></div>
+      <div id="gates-history" class="gate-history"></div>
+    </section>
+
     <p class="footer">
       Dados gerados estaticamente por <code>scripts/export_logs.py</code>.
-      Nada aqui é uma recomendação financeira — apenas paper trading.
+      Paper trades são simulações (não há ordens reais). Nada aqui é
+      recomendação financeira.
     </p>
   </main>
+
+  <div class="modal-backdrop" id="modal-backdrop">
+    <div class="modal" id="modal">
+      <header>
+        <h3 id="modal-title">Detalhes da decisão</h3>
+        <button class="close" id="modal-close">fechar</button>
+      </header>
+      <div id="modal-body"></div>
+    </div>
+  </div>
 
   <script>
     (function () {
@@ -180,6 +429,11 @@
       const DATA_URL = "data.json";
 
       const $ = (id) => document.getElementById(id);
+
+      let lastDecisions = [];
+      let lastPaperTrades = [];
+      let lastPaperSummary = {};
+      let paperFilter = "all";
 
       function fmt(value, fallback) {
         if (value === null || value === undefined || value === "") return fallback || "—";
@@ -193,21 +447,21 @@
         return n.toFixed(digits == null ? 2 : digits);
       }
 
+      function fmtScore(value) {
+        if (value === null || value === undefined || value === "") return "—";
+        const n = Number(value);
+        if (Number.isNaN(n)) return "—";
+        return (n >= 0 ? "+" : "") + n.toFixed(2);
+      }
+
       function fmtTime(iso) {
         if (!iso) return "—";
         const d = new Date(iso);
         if (Number.isNaN(d.getTime())) return iso;
         const pad = (n) => String(n).padStart(2, "0");
         return (
-          d.getFullYear() +
-          "-" +
-          pad(d.getMonth() + 1) +
-          "-" +
-          pad(d.getDate()) +
-          " " +
-          pad(d.getHours()) +
-          ":" +
-          pad(d.getMinutes())
+          d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " +
+          pad(d.getHours()) + ":" + pad(d.getMinutes())
         );
       }
 
@@ -215,6 +469,26 @@
         const v = (value || "NEUTRAL").toString();
         const cls = extra ? `pill ${v} ${extra}` : `pill ${v}`;
         return `<span class="${cls}">${v}</span>`;
+      }
+
+      function escapeHtml(value) {
+        if (value === null || value === undefined) return "";
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function scoreBar(value) {
+        if (value === null || value === undefined) return "";
+        const n = Number(value);
+        if (Number.isNaN(n)) return "";
+        const pct = Math.min(50, Math.abs(n) * 50);
+        const left = n >= 0 ? "50%" : `${50 - pct}%`;
+        const cls = n >= 0 ? "fill" : "fill neg";
+        return `<span class="score-bar"><span class="${cls}" style="left:${left};width:${pct}%;"></span></span>${fmtScore(n)}`;
       }
 
       function renderCards(summary) {
@@ -227,12 +501,17 @@
             sub: "regra estrita 3/3",
           },
           {
+            label: "Score signal BUY/SELL/NEUTRAL",
+            value: `${summary.score_buy ?? 0} / ${summary.score_sell ?? 0} / ${summary.score_neutral ?? 0}`,
+            sub: "regra por threshold de score",
+          },
+          {
             label: "Shadow BUY/SELL/NEUTRAL",
             value: `${summary.shadow_buy ?? 0} / ${summary.shadow_sell ?? 0} / ${summary.shadow_neutral ?? 0}`,
             sub: "regra 2/3",
           },
           {
-            label: "Trades simulados",
+            label: "Trades simulados (gating)",
             value: `${summary.allowed ?? 0}`,
             sub: `bloqueados: ${summary.blocked ?? 0}`,
             accent: (summary.allowed ?? 0) > 0 ? "accent-buy" : "accent-warn",
@@ -240,6 +519,10 @@
           {
             label: "Confiança média",
             value: `${summary.average_confidence ?? 0}%`,
+          },
+          {
+            label: "Score combinado médio",
+            value: fmtScore(summary.average_combined_score),
           },
           {
             label: "Origem dos dados",
@@ -262,39 +545,36 @@
           return;
         }
 
-        const rows = decisions
-          .slice()
-          .reverse()
-          .map((d) => {
-            const event = d.dangerous_event_nearby
-              ? `<span class="pill event" title="${(d.dangerous_event_reason || "").replace(/"/g, "&quot;")}">evento</span>`
-              : "";
-            const tradeCell = d.trade_allowed
-              ? '<span class="pill allowed">simulado</span>'
-              : '<span class="pill blocked">bloqueado</span>';
-            const reasonCell = d.trade_allowed
-              ? ""
-              : `<td class="reason">${fmt(d.block_reason, "—")}</td>`;
-            const reasonHeader = ""; // omitted — we render reason inside the trade cell
-            const volClass = `vol-${d.volatility_level || "unknown"}`;
+        const reversed = decisions.slice().reverse();
+        const rows = reversed.map((d, idx) => {
+          const event = d.dangerous_event_nearby
+            ? `<span class="pill event" title="${(d.dangerous_event_reason || "").replace(/"/g, "&quot;")}">evento</span>`
+            : "";
+          const tradeCell = d.trade_allowed
+            ? '<span class="pill allowed">simulado</span>'
+            : '<span class="pill blocked">bloqueado</span>';
+          const volClass = `vol-${d.volatility_level || "unknown"}`;
+          const paperBadge = d.paper_trade
+            ? `<span class="pill ${d.paper_trade.status}" title="paper trade #${d.paper_trade.id}">${d.paper_trade.status}</span>`
+            : "";
 
-            return `
-              <tr>
-                <td>${fmtTime(d.timestamp)}</td>
-                <td>${fmt(d.pair, "—")} <span style="color:var(--muted)">${fmt(d.timeframe, "")}</span></td>
-                <td>${pill(d.ai_signal)}</td>
-                <td>${pill(d.technical_signal)}</td>
-                <td>${pill(d.shadow_technical_signal)}</td>
-                <td>${pill(d.combined_signal)}</td>
-                <td>${d.confidence ?? 0}%</td>
-                <td>${tradeCell} ${event}</td>
-                <td class="reason">${d.trade_allowed ? "" : fmt(d.block_reason, "")}</td>
-                <td>${fmtNumber(d.current_price, 5)}</td>
-                <td><span class="${volClass}">${fmtNumber(d.atr_pips, 1)} pips</span></td>
-              </tr>
-            `;
-          })
-          .join("");
+          return `
+            <tr>
+              <td>${fmtTime(d.timestamp)}</td>
+              <td>${fmt(d.pair, "—")} <span style="color:var(--muted)">${fmt(d.timeframe, "")}</span></td>
+              <td>${pill(d.ai_signal)} <span style="color:var(--muted);font-size:11px;">${fmtScore(d.ai_score)}</span></td>
+              <td>${pill(d.technical_signal)} <span style="color:var(--muted);font-size:11px;">${fmtScore(d.technical_score)}</span></td>
+              <td>${pill(d.shadow_technical_signal)}</td>
+              <td>${pill(d.combined_signal)} <span style="color:var(--muted);font-size:11px;">${fmtScore(d.combined_score)}</span></td>
+              <td>${d.confidence ?? 0}%</td>
+              <td>${tradeCell} ${event} ${paperBadge}</td>
+              <td class="reason">${d.trade_allowed ? "" : escapeHtml(d.blocking_reason || d.block_reason || "")}</td>
+              <td>${fmtNumber(d.current_price, 5)}</td>
+              <td><span class="${volClass}">${fmtNumber(d.atr_pips, 1)} pips</span></td>
+              <td><button class="details-btn" data-decision-index="${idx}">Detalhes</button></td>
+            </tr>
+          `;
+        }).join("");
 
         $("table-host").innerHTML = `
           <table>
@@ -311,12 +591,299 @@
                 <th>Motivo / evento</th>
                 <th>Preço</th>
                 <th>ATR</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `;
+
+        $("table-host").querySelectorAll(".details-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const idx = Number(btn.dataset.decisionIndex);
+            openDecisionModal(reversed[idx]);
+          });
+        });
+      }
+
+      function renderPaperCards(summary, filter) {
+        const map = {
+          all: "Todos",
+          ai_only: "Só IA",
+          combined: "Combinado",
+          BUY: "BUY",
+          SELL: "SELL",
+        };
+        const stats = summary[filter] || summary.all || {};
+        const cards = [
+          { label: `Paper trades (${map[filter] || filter})`, value: stats.total ?? 0,
+            sub: `abertos: ${stats.open ?? 0}` },
+          { label: "Wins / Losses / Expired",
+            value: `${stats.wins ?? 0} / ${stats.losses ?? 0} / ${stats.expired ?? 0}` },
+          { label: "Winrate", value: stats.win_rate != null ? `${stats.win_rate}%` : "—" },
+          { label: "Avg pips", value: stats.avg_pips != null ? fmtNumber(stats.avg_pips, 1) : "—" },
+          { label: "Avg R", value: stats.avg_r != null ? fmtNumber(stats.avg_r, 2) : "—" },
+          { label: "Best / Worst",
+            value: `${stats.best_pips != null ? fmtNumber(stats.best_pips, 1) : "—"} / ${stats.worst_pips != null ? fmtNumber(stats.worst_pips, 1) : "—"}` },
+        ];
+        $("paper-cards").innerHTML = cards.map((c) => {
+          const sub = c.sub ? `<div class="sub">${c.sub}</div>` : "";
+          return `<div class="card"><div class="label">${c.label}</div><div class="value">${c.value}</div>${sub}</div>`;
+        }).join("");
+      }
+
+      function filterPaperTrades(trades, filter) {
+        if (!filter || filter === "all") return trades;
+        if (filter === "ai_only") return trades.filter((t) => t.source === "ai_only");
+        if (filter === "combined") return trades.filter((t) => t.source === "combined");
+        if (filter === "BUY") return trades.filter((t) => t.direction === "BUY");
+        if (filter === "SELL") return trades.filter((t) => t.direction === "SELL");
+        return trades;
+      }
+
+      function renderPaperTable(trades) {
+        if (!trades || trades.length === 0) {
+          $("paper-table-host").innerHTML = '<div class="empty">Sem paper trades ainda.</div>';
+          return;
+        }
+        const rows = trades.map((t) => {
+          return `
+            <tr>
+              <td>#${t.id}</td>
+              <td>${fmtTime(t.created_at)}</td>
+              <td>${fmt(t.pair, "—")} <span style="color:var(--muted)">${fmt(t.timeframe, "")}</span></td>
+              <td>${pill(t.direction)}</td>
+              <td>${fmtNumber(t.entry_price, 5)}</td>
+              <td>${fmtNumber(t.simulated_sl, 5)}<br><span style="color:var(--muted);font-size:11px;">${fmtNumber(t.sl_pips, 1)} pips</span></td>
+              <td>${fmtNumber(t.simulated_tp, 5)}<br><span style="color:var(--muted);font-size:11px;">${fmtNumber(t.tp_pips, 1)} pips</span></td>
+              <td><span class="pill ${t.status}">${t.status}</span></td>
+              <td>${t.result_pips != null ? fmtNumber(t.result_pips, 1) + " pips" : "—"}</td>
+              <td>${t.result_r_multiple != null ? fmtNumber(t.result_r_multiple, 2) + "R" : "—"}</td>
+              <td><span style="color:var(--muted);font-size:11px;">${escapeHtml(t.source || "")}</span></td>
+            </tr>
+          `;
+        }).join("");
+
+        $("paper-table-host").innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Criado</th>
+                <th>Par</th>
+                <th>Direção</th>
+                <th>Entrada</th>
+                <th>SL</th>
+                <th>TP</th>
+                <th>Estado</th>
+                <th>Pips</th>
+                <th>R</th>
+                <th>Origem</th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
         `;
       }
+
+      function gateValue(gate) {
+        if (!gate || gate.value === null || gate.value === undefined) return "n/a";
+        return `${gate.value}${gate.value_unit || ""}`;
+      }
+
+      function renderGates(snapshot, history) {
+        const statusEl = $("gates-status");
+        const gridEl = $("gates-grid");
+        const splitsEl = $("gates-splits");
+        const historyEl = $("gates-history");
+
+        if (!snapshot || !snapshot.overall) {
+          statusEl.textContent = "sem dados";
+          statusEl.className = "gate-status partial";
+          gridEl.innerHTML = '<div class="empty">Sem snapshot de gates. Corre `python scripts/check_gates.py`.</div>';
+          splitsEl.innerHTML = "";
+          historyEl.innerHTML = "";
+          return;
+        }
+
+        const overall = snapshot.overall;
+        const metrics = overall.metrics || {};
+        const status = overall.status || "partial";
+        statusEl.textContent = status.replace("_", "-");
+        statusEl.className = `gate-status ${status}`;
+
+        const gates = Array.isArray(overall.gates) ? overall.gates : [];
+        gridEl.innerHTML = gates.map((g) => {
+          const state = g.insufficient_data ? "insufficient" : (g.pass ? "pass" : "fail");
+          const mark = g.insufficient_data ? "?" : (g.pass ? "ok" : "fail");
+          return `
+            <div class="gate-row ${state}">
+              <span class="label">${escapeHtml(g.label || g.name || "gate")}</span>
+              <span class="value ${state}">${escapeHtml(mark)} · ${escapeHtml(gateValue(g))}</span>
+            </div>
+          `;
+        }).join("") || '<div class="empty">Sem gates no snapshot.</div>';
+
+        const splitCards = [];
+        const bySource = snapshot.by_source || {};
+        Object.keys(bySource).forEach((key) => {
+          const data = bySource[key] || {};
+          const m = data.metrics || {};
+          const n = (m.wins || 0) + (m.losses || 0) + (m.expired || 0);
+          splitCards.push({ label: key, status: data.status, n, wr: m.win_rate, pf: m.profit_factor, r: m.avg_r });
+        });
+        const byDirection = snapshot.by_direction || {};
+        Object.keys(byDirection).forEach((key) => {
+          const data = byDirection[key] || {};
+          const m = data.metrics || {};
+          const n = (m.wins || 0) + (m.losses || 0) + (m.expired || 0);
+          splitCards.push({ label: key, status: data.status, n, wr: m.win_rate, pf: m.profit_factor, r: m.avg_r });
+        });
+
+        splitsEl.innerHTML = splitCards.map((s) => `
+          <div class="split-card">
+            <div class="split-label">${escapeHtml(s.label)}</div>
+            <div>${escapeHtml(s.status || "partial")} · n=${s.n}</div>
+            <div class="split-stats">WR=${fmt(s.wr, "—")}% · PF=${fmt(s.pf, "—")} · R=${fmt(s.r, "—")}</div>
+          </div>
+        `).join("");
+
+        const closedTotal = (metrics.wins || 0) + (metrics.losses || 0) + (metrics.expired || 0);
+        const checked = fmtTime(snapshot.checked_at);
+        const historyCount = Array.isArray(history) ? history.length : 0;
+        historyEl.innerHTML = `Último check: ${escapeHtml(checked)} · trades fechados: ${closedTotal} · histórico exportado: ${historyCount}`;
+      }
+
+      function applyPaperFilter(filter) {
+        paperFilter = filter;
+        document.querySelectorAll("#paper-filters button").forEach((btn) => {
+          btn.classList.toggle("active", btn.dataset.filter === filter);
+        });
+        renderPaperCards(lastPaperSummary, filter);
+        renderPaperTable(filterPaperTrades(lastPaperTrades, filter));
+      }
+
+      function buildKv(rows) {
+        return `<div class="kv">${rows.map(([k, v]) => `<div class="k">${escapeHtml(k)}</div><div class="v">${v == null || v === "" ? "—" : v}</div>`).join("")}</div>`;
+      }
+
+      function openDecisionModal(d) {
+        if (!d) return;
+        const features = d.ai_features_snapshot || {};
+        const featuresEntries = Object.entries(features).filter(([k]) => k !== "recent_candles");
+        const featuresHtml = featuresEntries.length
+          ? `<div class="features-grid">${featuresEntries.map(([k, v]) => {
+              let display = v;
+              if (typeof v === "number") display = fmtNumber(v, 5);
+              if (v == null || v === "") display = "—";
+              return `<div><span style="color:var(--muted);">${escapeHtml(k)}:</span> ${escapeHtml(display)}</div>`;
+            }).join("")}</div>`
+          : '<div style="color:var(--muted);font-size:12px;">Sem snapshot de features.</div>';
+
+        const candlesHtml = (features.recent_candles && features.recent_candles.length)
+          ? `<pre class="candles">${escapeHtml(JSON.stringify(features.recent_candles, null, 2))}</pre>`
+          : "";
+
+        const paper = d.paper_trade;
+        const paperSection = paper
+          ? `<section class="modal-section">
+              <h4>Paper trade associada (#${paper.id})</h4>
+              ${buildKv([
+                ["Direção", pill(paper.direction)],
+                ["Estado", `<span class="pill ${paper.status}">${paper.status}</span>`],
+                ["Entrada", fmtNumber(paper.entry_price, 5)],
+                ["SL", `${fmtNumber(paper.simulated_sl, 5)} (${fmtNumber(paper.sl_pips, 1)} pips)`],
+                ["TP", `${fmtNumber(paper.simulated_tp, 5)} (${fmtNumber(paper.tp_pips, 1)} pips)`],
+                ["ATR usada", paper.atr_pips != null ? `${fmtNumber(paper.atr_pips, 1)} pips` : "—"],
+                ["Criado", fmtTime(paper.created_at)],
+                ["Expira em", fmtTime(paper.expiry_at)],
+                ["Resultado", paper.result_pips != null ? `${fmtNumber(paper.result_pips, 1)} pips` : "—"],
+                ["R-multiple", paper.result_r_multiple != null ? `${fmtNumber(paper.result_r_multiple, 2)}R` : "—"],
+                ["Razão fecho", escapeHtml(paper.close_reason || "")],
+                ["Origem do sinal", escapeHtml(paper.source || "—")],
+              ])}
+            </section>`
+          : "";
+
+        const html = `
+          <section class="modal-section">
+            <h4>Decisão IA</h4>
+            ${buildKv([
+              ["Sinal IA", `${pill(d.ai_signal)} ${scoreBar(d.ai_score)}`],
+              ["Confiança IA", `${d.confidence ?? 0}% (score ${fmtScore(d.ai_confidence_score)})`],
+              ["Razão IA", escapeHtml(d.ai_reason)],
+              ["Modelo", escapeHtml(d.ai_model_version)],
+            ])}
+          </section>
+
+          <section class="modal-section">
+            <h4>Features snapshot</h4>
+            ${featuresHtml}
+            ${candlesHtml}
+          </section>
+
+          <section class="modal-section">
+            <h4>Análise técnica</h4>
+            ${buildKv([
+              ["Sinal técnico", `${pill(d.technical_signal)} ${scoreBar(d.technical_score)}`],
+              ["RSI", `${fmtNumber(d.rsi_value, 1)} (${escapeHtml(d.rsi_vote)})`],
+              ["EMA", `EMA20=${fmtNumber(d.ema20_value, 5)} / EMA50=${fmtNumber(d.ema50_value, 5)} (${escapeHtml(d.ema_vote)})`],
+              ["MACD", `MACD=${fmtNumber(d.macd_value, 5)} / signal=${fmtNumber(d.macd_signal_value, 5)} (${escapeHtml(d.macd_vote)})`],
+              ["Razão técnica", escapeHtml(d.technical_reason)],
+            ])}
+          </section>
+
+          <section class="modal-section">
+            <h4>Análise shadow</h4>
+            ${buildKv([
+              ["Shadow técnico", `${pill(d.shadow_technical_signal)} ${scoreBar(d.shadow_score)}`],
+              ["Confiança shadow", d.shadow_technical_confidence != null ? `${d.shadow_technical_confidence}%` : "—"],
+              ["Razão shadow", escapeHtml(d.shadow_technical_reason)],
+              ["Shadow combinado", `${pill(d.shadow_combined_signal)} (${d.shadow_combined_confidence ?? 0}%)`],
+              ["Razão shadow combinado", escapeHtml(d.shadow_combined_reason)],
+            ])}
+          </section>
+
+          <section class="modal-section">
+            <h4>Decisão final</h4>
+            ${buildKv([
+              ["Sinal combinado (estrito)", `${pill(d.combined_signal)} ${scoreBar(d.combined_score)}`],
+              ["Sinal por score", pill(d.score_combined_signal || "NEUTRAL")],
+              ["Modo de gating", `<span style="color:var(--muted);">${escapeHtml(d.gating_mode || "strict")}</span>`],
+              ["Sinal de gating efectivo", `${pill(d.gating_signal || d.combined_signal)} (${d.gating_confidence ?? d.confidence ?? 0}%)`],
+              ["Trade", d.trade_allowed ? '<span class="pill allowed">simulado</span>' : '<span class="pill blocked">bloqueado</span>'],
+              ["Razão combinado", escapeHtml(d.combined_reason)],
+              ["Bloqueio", escapeHtml(d.blocking_reason || d.block_reason || "")],
+              ["ATR", d.atr_pips != null ? `${fmtNumber(d.atr_pips, 1)} pips (${d.volatility_level})` : "—"],
+              ["Preço", fmtNumber(d.current_price, 5)],
+              ["Timestamp", fmtTime(d.timestamp)],
+              ["Evento próximo", d.dangerous_event_nearby ? `<span class="pill event">evento</span> ${escapeHtml(d.dangerous_event_reason || "")}` : "não"],
+            ])}
+          </section>
+
+          ${paperSection}
+        `;
+
+        $("modal-title").textContent = `Detalhes — ${d.pair} ${d.timeframe || ""} ${fmtTime(d.timestamp)}`;
+        $("modal-body").innerHTML = html;
+        $("modal-backdrop").classList.add("open");
+      }
+
+      function closeModal() {
+        $("modal-backdrop").classList.remove("open");
+      }
+
+      $("modal-close").addEventListener("click", closeModal);
+      $("modal-backdrop").addEventListener("click", (e) => {
+        if (e.target === $("modal-backdrop")) closeModal();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeModal();
+      });
+
+      document.querySelectorAll("#paper-filters button").forEach((btn) => {
+        btn.addEventListener("click", () => applyPaperFilter(btn.dataset.filter));
+      });
 
       async function load() {
         try {
@@ -325,9 +892,19 @@
           const payload = await res.json();
           const summary = payload.summary || {};
           const decisions = Array.isArray(payload.decisions) ? payload.decisions : [];
+          const paperTrades = Array.isArray(payload.paper_trades) ? payload.paper_trades : [];
+          const paperSummary = payload.paper_trade_summary || { all: {} };
+          const gatesSnapshot = payload.gates_check || null;
+          const gatesHistory = Array.isArray(payload.gates_history) ? payload.gates_history : [];
+
+          lastDecisions = decisions;
+          lastPaperTrades = paperTrades;
+          lastPaperSummary = paperSummary;
 
           renderCards(summary);
           renderTable(decisions);
+          applyPaperFilter(paperFilter);
+          renderGates(gatesSnapshot, gatesHistory);
 
           $("generated").textContent = "atualizado " + fmtTime(summary.generated_at);
           $("source").textContent = "fonte: " + (summary.source || "—");

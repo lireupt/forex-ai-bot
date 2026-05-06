@@ -2,6 +2,7 @@
 
 - Lê SQLite primeiro (data/forex_bot.db), faz fallback para logs/decisions.jsonl.
 - Aplica whitelist de campos (não expõe API keys, .env, raw logs ou DB completa).
+- Inclui scores, explicações estruturadas e estado de paper-trades por decisão.
 - Idempotente e fail-safe: nunca levanta excepções para fora.
 
 Uso:
@@ -19,26 +20,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "data" / "forex_bot.db"
 JSONL_PATH = ROOT / "logs" / "decisions.jsonl"
+GATES_PATH = ROOT / "data" / "gates_check.json"
 DEFAULT_OUT = ROOT / "web" / "data.json"
 DEFAULT_LIMIT = 50
-
-EXPORT_FIELDS = (
-    "timestamp",
-    "pair",
-    "timeframe",
-    "ai_signal",
-    "technical_signal",
-    "shadow_technical_signal",
-    "combined_signal",
-    "confidence",
-    "trade_allowed",
-    "block_reason",
-    "current_price",
-    "atr_pips",
-    "volatility_level",
-    "dangerous_event_nearby",
-    "dangerous_event_reason",
-)
 
 
 def _volatility_level(atr_pips):
@@ -67,8 +51,35 @@ def _coerce_bool(value):
     return bool(value)
 
 
-def _normalise(row):
+def _coerce_float(value):
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_features_snapshot(value):
+    if value is None or value == "":
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _normalise(row, paper_trade_lookup=None):
     atr_pips = row.get("atr_pips")
+    paper_trade = None
+    paper_trade_id = row.get("paper_trade_id")
+    if paper_trade_id and paper_trade_lookup:
+        paper_trade = paper_trade_lookup.get(paper_trade_id)
+
     return {
         "timestamp": row.get("timestamp") or "",
         "pair": row.get("pair") or "",
@@ -77,15 +88,130 @@ def _normalise(row):
         "technical_signal": row.get("technical_signal") or "NEUTRAL",
         "shadow_technical_signal": row.get("shadow_technical_signal") or "NEUTRAL",
         "combined_signal": row.get("combined_signal") or "NEUTRAL",
+        "score_combined_signal": row.get("score_combined_signal") or None,
+        "gating_mode": row.get("gating_mode") or "strict",
+        "gating_signal": row.get("gating_signal") or row.get("combined_signal") or "NEUTRAL",
+        "gating_confidence": int(row.get("gating_confidence") or row.get("confidence") or 0),
         "confidence": int(row.get("confidence") or 0),
         "trade_allowed": _coerce_bool(row.get("trade_allowed")),
         "block_reason": row.get("block_reason") or "",
+        "blocking_reason": row.get("blocking_reason") or row.get("block_reason") or "",
         "current_price": row.get("current_price"),
         "atr_pips": atr_pips,
+        "atr_price": row.get("atr_price"),
         "volatility_level": _volatility_level(atr_pips),
         "dangerous_event_nearby": _coerce_bool(row.get("dangerous_event_nearby")),
         "dangerous_event_reason": row.get("dangerous_event_reason") or "",
+        "ai_score": _coerce_float(row.get("ai_score")),
+        "ai_confidence_score": _coerce_float(row.get("ai_confidence_score")),
+        "ai_reason": row.get("ai_reason") or "",
+        "ai_features_snapshot": _parse_features_snapshot(row.get("ai_features_snapshot")),
+        "ai_model_version": row.get("ai_model_version") or "unknown",
+        "technical_score": _coerce_float(row.get("technical_score")),
+        "technical_reason": row.get("technical_reason") or "",
+        "shadow_score": _coerce_float(row.get("shadow_score")),
+        "shadow_technical_reason": row.get("shadow_technical_reason") or "",
+        "shadow_technical_confidence": row.get("shadow_technical_confidence"),
+        "shadow_combined_signal": row.get("shadow_combined_signal") or "NEUTRAL",
+        "shadow_combined_confidence": row.get("shadow_combined_confidence"),
+        "shadow_combined_reason": row.get("shadow_combined_reason") or "",
+        "combined_score": _coerce_float(row.get("combined_score")),
+        "combined_reason": row.get("combined_reason") or "",
+        "rsi_value": row.get("rsi_value"),
+        "ema20_value": row.get("ema20_value"),
+        "ema50_value": row.get("ema50_value"),
+        "macd_value": row.get("macd_value"),
+        "macd_signal_value": row.get("macd_signal_value"),
+        "rsi_vote": row.get("rsi_vote") or "neutral",
+        "ema_vote": row.get("ema_vote") or "neutral",
+        "macd_vote": row.get("macd_vote") or "neutral",
+        "paper_trade": paper_trade,
     }
+
+
+def _row_to_paper_trade(row):
+    return {
+        "id": row.get("id"),
+        "decision_id": row.get("decision_id"),
+        "pair": row.get("pair"),
+        "timeframe": row.get("timeframe"),
+        "direction": row.get("direction"),
+        "entry_price": row.get("entry_price"),
+        "simulated_sl": row.get("simulated_sl"),
+        "simulated_tp": row.get("simulated_tp"),
+        "sl_pips": row.get("sl_pips"),
+        "tp_pips": row.get("tp_pips"),
+        "atr_pips": row.get("atr_pips"),
+        "status": row.get("status") or "open",
+        "source": row.get("source") or "",
+        "signal_source": row.get("signal_source") or "",
+        "created_at": row.get("created_at"),
+        "expiry_at": row.get("expiry_at"),
+        "close_price": row.get("close_price"),
+        "closed_at": row.get("closed_at"),
+        "close_reason": row.get("close_reason") or "",
+        "result_pips": row.get("result_pips"),
+        "result_r_multiple": row.get("result_r_multiple"),
+    }
+
+
+def _summarise_paper_trades(trades):
+    def _aggregate(filtered):
+        total = len(filtered)
+        wins = sum(1 for t in filtered if t["status"] == "win")
+        losses = sum(1 for t in filtered if t["status"] == "loss")
+        expired = sum(1 for t in filtered if t["status"] == "expired")
+        open_count = sum(1 for t in filtered if t["status"] == "open")
+        closed = wins + losses
+        pips = [t["result_pips"] for t in filtered if t.get("result_pips") is not None]
+        rs = [t["result_r_multiple"] for t in filtered if t.get("result_r_multiple") is not None]
+        return {
+            "total": total,
+            "open": open_count,
+            "wins": wins,
+            "losses": losses,
+            "expired": expired,
+            "win_rate": round(wins / closed * 100, 1) if closed else None,
+            "avg_pips": round(sum(pips) / len(pips), 1) if pips else None,
+            "avg_r": round(sum(rs) / len(rs), 2) if rs else None,
+            "best_pips": round(max(pips), 1) if pips else None,
+            "worst_pips": round(min(pips), 1) if pips else None,
+        }
+
+    return {
+        "all": _aggregate(trades),
+        "ai_only": _aggregate([t for t in trades if t.get("source") == "ai_only"]),
+        "combined": _aggregate([t for t in trades if t.get("source") == "combined"]),
+        "buy": _aggregate([t for t in trades if t.get("direction") == "BUY"]),
+        "sell": _aggregate([t for t in trades if t.get("direction") == "SELL"]),
+    }
+
+
+def _read_paper_trades_from_sqlite(limit=200):
+    if not DB_PATH.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                """
+                SELECT id, decision_id, pair, timeframe, direction, entry_price,
+                       simulated_sl, simulated_tp, sl_pips, tp_pips, atr_pips,
+                       status, source, signal_source, created_at, expiry_at,
+                       close_price, closed_at, close_reason, result_pips,
+                       result_r_multiple
+                FROM paper_trades
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return []
+    return [_row_to_paper_trade(dict(row)) for row in rows]
 
 
 def _read_from_sqlite(limit):
@@ -98,9 +224,21 @@ def _read_from_sqlite(limit):
             rows = conn.execute(
                 """
                 SELECT timestamp, pair, timeframe, ai_signal, technical_signal,
-                       shadow_technical_signal, combined_signal, confidence,
-                       trade_allowed, block_reason, current_price, atr_pips,
-                       dangerous_event_nearby, dangerous_event_reason
+                       shadow_technical_signal, shadow_combined_signal,
+                       shadow_combined_confidence, shadow_combined_reason,
+                       combined_signal, score_combined_signal,
+                       gating_mode, gating_signal, gating_confidence, confidence,
+                       trade_allowed, block_reason, blocking_reason,
+                       current_price, atr_pips, atr_price,
+                       dangerous_event_nearby, dangerous_event_reason,
+                       ai_score, ai_confidence_score, ai_reason,
+                       ai_features_snapshot, ai_model_version,
+                       technical_score, technical_reason, shadow_score,
+                       shadow_technical_reason, shadow_technical_confidence,
+                       combined_score, combined_reason,
+                       rsi_value, ema20_value, ema50_value, macd_value,
+                       macd_signal_value, rsi_vote, ema_vote, macd_vote,
+                       paper_trade_id
                 FROM decisions
                 ORDER BY id DESC
                 LIMIT ?
@@ -112,7 +250,10 @@ def _read_from_sqlite(limit):
     except sqlite3.Error as e:
         return None, f"db erro: {type(e).__name__}: {e}"
 
-    items = [_normalise(dict(row)) for row in rows]
+    paper_trades = _read_paper_trades_from_sqlite(limit=500)
+    paper_trade_lookup = {p["id"]: p for p in paper_trades}
+
+    items = [_normalise(dict(row), paper_trade_lookup) for row in rows]
     items.reverse()
     return items, "sqlite"
 
@@ -142,9 +283,12 @@ def _read_from_jsonl(limit):
 def _summarise(items):
     counts = {"BUY": 0, "SELL": 0, "NEUTRAL": 0}
     shadow_counts = {"BUY": 0, "SELL": 0, "NEUTRAL": 0}
+    score_counts = {"BUY": 0, "SELL": 0, "NEUTRAL": 0}
     allowed = 0
     blocked = 0
     confidence_sum = 0
+    score_sum = 0.0
+    score_seen = 0
 
     for item in items:
         sig = item["combined_signal"] if item["combined_signal"] in counts else "NEUTRAL"
@@ -153,15 +297,23 @@ def _summarise(items):
         if shadow not in shadow_counts:
             shadow = "NEUTRAL"
         shadow_counts[shadow] += 1
+        score_label = item.get("score_combined_signal") or "NEUTRAL"
+        if score_label not in score_counts:
+            score_label = "NEUTRAL"
+        score_counts[score_label] += 1
 
         if item["trade_allowed"]:
             allowed += 1
         else:
             blocked += 1
         confidence_sum += item["confidence"]
+        if item.get("combined_score") is not None:
+            score_sum += float(item["combined_score"])
+            score_seen += 1
 
     total = len(items)
     avg_conf = round(confidence_sum / total, 1) if total else 0
+    avg_combined_score = round(score_sum / score_seen, 3) if score_seen else None
 
     return {
         "total": total,
@@ -171,11 +323,50 @@ def _summarise(items):
         "shadow_buy": shadow_counts["BUY"],
         "shadow_sell": shadow_counts["SELL"],
         "shadow_neutral": shadow_counts["NEUTRAL"],
+        "score_buy": score_counts["BUY"],
+        "score_sell": score_counts["SELL"],
+        "score_neutral": score_counts["NEUTRAL"],
         "allowed": allowed,
         "blocked": blocked,
         "average_confidence": avg_conf,
+        "average_combined_score": avg_combined_score,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _read_gates_snapshot():
+    if not GATES_PATH.exists():
+        return None
+    try:
+        with GATES_PATH.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _read_gate_history_from_sqlite(limit=20):
+    if not DB_PATH.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                """
+                SELECT checked_at, status, total_trades, wins, losses, expired,
+                       win_rate, profit_factor, avg_r, max_streak_losses,
+                       max_drawdown_pct
+                FROM gate_checks
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return []
+    return [dict(row) for row in rows]
 
 
 def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
@@ -190,9 +381,18 @@ def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
     summary = _summarise(items)
     summary["source"] = source
 
+    paper_trades = _read_paper_trades_from_sqlite(limit=500) if source == "sqlite" else []
+    paper_trade_summary = _summarise_paper_trades(paper_trades)
+    gates_snapshot = _read_gates_snapshot()
+    gates_history = _read_gate_history_from_sqlite(limit=20)
+
     payload = {
         "summary": summary,
         "decisions": items,
+        "paper_trades": paper_trades,
+        "paper_trade_summary": paper_trade_summary,
+        "gates_check": gates_snapshot,
+        "gates_history": gates_history,
     }
 
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")

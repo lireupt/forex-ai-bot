@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv/bin/pip install *)",
+      "Bash(venv/bin/python -m pytest tests/test_scoring.py -v)",
+      "Bash(venv/bin/python -m pytest tests/test_database.py -v)",
+      "Bash(venv/bin/python -m pytest tests/test_paper_trade_evaluator.py -v)",
+      "Bash(venv/bin/python -m pytest tests/test_main_helpers.py -v)",
+      "Bash(venv/bin/python -m pytest tests/test_ai_analyst.py -v)",
+      "Bash(venv/bin/python -m pytest tests/test_main_helpers.py::TestSelectGatingSignal -v)",
+      "Bash(venv/bin/python -m pytest -v)",
+      "Bash(venv/bin/python -c ' *)",
+      "Bash(venv/bin/python -m pytest --tb=short)",
+      "Bash(venv/bin/python -m py_compile main.py modules/scoring.py modules/database.py modules/ai_analyst.py modules/technical.py scripts/export_logs.py scripts/evaluate_paper_trades.py backtest.py)",
+      "Bash(venv/bin/pip freeze *)",
+      "Bash(venv/bin/python -m pytest tests/test_check_gates.py -v)"
+    ]
+  }
+}

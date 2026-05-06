@@ -7,10 +7,12 @@ estáticos.
 ## Como funciona
 
 1. `main.py` chama `scripts/export_logs.py` no fim de cada execução.
-2. O script lê o SQLite (`data/forex_bot.db`) — fallback para
-   `logs/decisions.jsonl` — e escreve as últimas 50 decisões + summary para
-   `web/data.json`.
-3. `index.html` faz `fetch("data.json")` a cada 60 segundos.
+2. `scripts/check_gates.py` escreve o snapshot de validação em
+   `data/gates_check.json` e guarda histórico na tabela `gate_checks`.
+3. `scripts/export_logs.py` lê o SQLite (`data/forex_bot.db`) — fallback para
+   `logs/decisions.jsonl` — e escreve as últimas 50 decisões, paper trades,
+   summary e gates para `web/data.json`.
+4. `index.html` faz `fetch("data.json")` a cada 60 segundos.
 
 ## Exportar manualmente
 
@@ -22,6 +24,14 @@ Com argumentos:
 
 ```bash
 venv/bin/python scripts/export_logs.py --limit 100 --out web/data.json
+```
+
+Para atualizar também os gates antes do export:
+
+```bash
+venv/bin/python scripts/evaluate_paper_trades.py
+venv/bin/python scripts/check_gates.py --quiet
+venv/bin/python scripts/export_logs.py
 ```
 
 ## Testar localmente
@@ -100,3 +110,9 @@ sudo certbot --nginx -d <dominio>
 
 Se quiseres expor mais campos, edita `EXPORT_FIELDS` e a função `_normalise`
 em `scripts/export_logs.py`.
+
+## Cron completo
+
+```cron
+5 * * * 1-5 cd /root/forex-ai-bot && /root/forex-ai-bot/venv/bin/python main.py && /root/forex-ai-bot/venv/bin/python scripts/evaluate_paper_trades.py && /root/forex-ai-bot/venv/bin/python scripts/check_gates.py --quiet && /root/forex-ai-bot/venv/bin/python scripts/export_logs.py >> logs/cron.log 2>&1
+```

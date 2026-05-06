@@ -9,20 +9,29 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
+
+def model_version_for_provider(provider):
+    provider = (provider or "").strip().lower()
+    if provider == "groq":
+        return f"groq:{GROQ_MODEL}"
+    if provider == "claude":
+        return f"claude:{CLAUDE_MODEL}"
+    return provider or "unknown"
+
 SYSTEM_PROMPT = """És um analista financeiro especializado em forex (mercado cambial).
 
-Recebes notícias e eventos económicos relevantes para um par de moedas. A tua tarefa é avaliar o sentimento e a direção provável do par, e devolver uma decisão estruturada.
+Recebes notícias e eventos económicos relevantes para um par de moedas. Pode também ser-te dado um snapshot técnico do gráfico (RSI, EMA, MACD, ATR, candles recentes). A tua tarefa é avaliar o sentimento e a direção provável do par, integrando fundamental e técnica, e devolver uma decisão estruturada.
 
 REGRAS OBRIGATÓRIAS:
 1. Respondes SEMPRE com um único objeto JSON válido, sem texto antes ou depois, sem markdown, sem ```json.
 2. O JSON deve conter EXACTAMENTE estes campos:
    - "signal": uma de "BUY", "SELL", "NEUTRAL"
    - "confidence": número inteiro de 0 a 100
-   - "reasoning": string em português explicando a tua análise (2-4 frases)
+   - "reasoning": string em português explicando a tua análise (2-4 frases). Refere explicitamente os fundamentais E o que viste no técnico (se foi fornecido).
    - "risk_level": uma de "LOW", "MEDIUM", "HIGH"
-   - "hold_off": booleano (true se for prudente não abrir posição agora)
-3. Se houver eventos de alto impacto iminentes ou notícias contraditórias fortes, define "hold_off": true.
-4. "confidence" deve refletir a tua certeza real — não inflaciones."""
+   - "hold_off": booleano. Define como true APENAS quando há evento high-impact iminente, notícias contraditórias muito fortes, ou contradição clara entre fundamental e técnica. NÃO marques true só por incerteza geral.
+3. "confidence" deve refletir a tua certeza real — não inflaciones, mas também não desvalorizes sinais alinhados (notícias + técnica a apontar no mesmo sentido = confidence mais alta).
+4. Quando o snapshot técnico contradiz o sentimento das notícias, podes manter um sinal direccional mas baixar "confidence"; reserva NEUTRAL para quando não há sinal claro de nenhum dos lados."""
 
 
 def _format_news(news):
@@ -54,20 +63,57 @@ def _format_events(events):
     return "\n".join(lines)
 
 
-def _build_user_message(news, events, pair):
-    return f"""Par: {pair}
+def _format_technical(technical):
+    if not technical:
+        return None
 
-NOTÍCIAS RELEVANTES:
-{_format_news(news)}
+    indicators = technical.get("indicators") or {}
+    if not indicators:
+        return None
 
-EVENTOS ECONÓMICOS DE ALTO IMPACTO:
-{_format_events(events)}
+    def _f(value, suffix=""):
+        if value is None:
+            return "n/a"
+        return f"{value}{suffix}"
 
-Analisa e devolve o JSON com a tua decisão."""
+    lines = [
+        f"- Preço actual: {_f(indicators.get('current_price'))}",
+        f"- RSI(14): {_f(indicators.get('rsi'))} ({indicators.get('rsi_signal', 'neutral')})",
+        f"- EMA20 vs EMA50: {_f(indicators.get('ema20'))} vs {_f(indicators.get('ema50'))} -> {indicators.get('ema_trend', 'neutral')}",
+        f"- MACD: {_f(indicators.get('macd'))} vs signal {_f(indicators.get('macd_signal_value'))} -> {indicators.get('macd_signal', 'neutral')}",
+        f"- ATR(14): {_f(indicators.get('atr_pips'), ' pips')} ({indicators.get('volatility_reason', '')})",
+    ]
+
+    technical_signal = technical.get("signal")
+    if technical_signal:
+        lines.append(
+            f"- Resumo técnico estrito: {technical_signal} "
+            f"(confiança {technical.get('confidence', 0)}%) — {technical.get('technical_reason', '')}"
+        )
+    return "\n".join(lines)
 
 
-def build_analysis_input(news, events, pair="EUR/USD"):
-    return _build_user_message(news, events, pair)
+def _build_user_message(news, events, pair, technical=None):
+    sections = [
+        f"Par: {pair}",
+        "",
+        "NOTÍCIAS RELEVANTES:",
+        _format_news(news),
+        "",
+        "EVENTOS ECONÓMICOS DE ALTO IMPACTO:",
+        _format_events(events),
+    ]
+
+    technical_block = _format_technical(technical)
+    if technical_block:
+        sections += ["", "SNAPSHOT TÉCNICO ACTUAL:", technical_block]
+
+    sections += ["", "Analisa e devolve o JSON com a tua decisão."]
+    return "\n".join(sections)
+
+
+def build_analysis_input(news, events, pair="EUR/USD", technical=None):
+    return _build_user_message(news, events, pair, technical=technical)
 
 
 def _fallback(provider, error_msg):
@@ -140,9 +186,9 @@ def _analyse_claude(user_message):
     return text
 
 
-def analyse(news, events, pair="EUR/USD"):
+def analyse(news, events, pair="EUR/USD", technical=None):
     provider = (os.getenv("AI_PROVIDER") or "groq").strip().lower()
-    user_message = _build_user_message(news, events, pair)
+    user_message = _build_user_message(news, events, pair, technical=technical)
 
     try:
         if provider == "groq":

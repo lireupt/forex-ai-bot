@@ -8,11 +8,16 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 
-from modules.ai_analyst import analyse as analyse_ai, build_analysis_input
+from modules.ai_analyst import (
+    analyse as analyse_ai,
+    build_analysis_input,
+    model_version_for_provider,
+)
 from modules import database
 from modules.news_scraper import fetch_all_events, fetch_all_news
 from modules.price_feed import PROVIDER as PRICE_PROVIDER, fetch_candles
 from modules.risk import evaluate_trade
+from modules import scoring
 from modules.technical import analyse as analyse_technical
 from scripts.export_logs import export as export_web_data
 
@@ -21,6 +26,11 @@ load_dotenv()
 PAIR = "EUR/USD"
 TIMEFRAME = "1h"
 DECISIONS_LOG = Path("logs/decisions.jsonl")
+PAPER_TRADE_DEFAULT_SL_MULT = 1.0
+PAPER_TRADE_DEFAULT_TP_MULT = 2.0
+PAPER_TRADE_DEFAULT_EXPIRY_BARS = 6
+PIP_SIZE = 0.0001
+TIMEFRAME_HOURS = {"1h": 1, "30m": 0.5, "15m": 0.25, "4h": 4, "1d": 24}
 
 
 def _pair_currencies(pair):
@@ -251,8 +261,8 @@ def _get_candles(conn, cache_config, count=100):
     return candles, "fresh"
 
 
-def _get_ai_result(conn, cache_config, provider, news, events):
-    input_text = build_analysis_input(news, events, PAIR)
+def _get_ai_result(conn, cache_config, provider, news, events, technical=None):
+    input_text = build_analysis_input(news, events, PAIR, technical=technical)
     input_hash = hashlib.sha256(input_text.encode("utf-8")).hexdigest()
     today = datetime.now(timezone.utc).date().isoformat()
 
@@ -261,7 +271,7 @@ def _get_ai_result(conn, cache_config, provider, news, events):
         if cached:
             return cached, input_hash, "cache"
 
-    result = analyse_ai(news, events, PAIR)
+    result = analyse_ai(news, events, PAIR, technical=technical)
     database.save_ai_analysis(conn, PAIR, today, input_hash, result)
     return result, input_hash, "fresh"
 
@@ -451,6 +461,202 @@ def _print_final(ai_result, technical_result, combined, trade_decision):
     print("└────────────────────────────────────────────")
 
 
+def _build_features_snapshot(technical_result, candles_df, ai_result):
+    indicators = technical_result.get("indicators", {})
+    snapshot = {
+        "close": indicators.get("current_price"),
+        "rsi": indicators.get("rsi"),
+        "ema20": indicators.get("ema20"),
+        "ema50": indicators.get("ema50"),
+        "ema20_minus_ema50": None,
+        "macd": indicators.get("macd"),
+        "macd_signal_value": indicators.get("macd_signal_value"),
+        "macd_minus_signal": None,
+        "atr14": indicators.get("atr14"),
+        "atr_pips": indicators.get("atr_pips"),
+        "volatility_level": _volatility_label(indicators.get("atr_pips")),
+        "trend": indicators.get("ema_trend"),
+        "momentum": indicators.get("macd_signal"),
+        "ai_signal": ai_result.get("signal"),
+        "ai_confidence": ai_result.get("confidence"),
+        "ai_risk_level": ai_result.get("risk_level"),
+        "ai_hold_off": bool(ai_result.get("hold_off")),
+    }
+    ema20 = indicators.get("ema20")
+    ema50 = indicators.get("ema50")
+    if ema20 is not None and ema50 is not None:
+        snapshot["ema20_minus_ema50"] = round(float(ema20) - float(ema50), 5)
+    macd_v = indicators.get("macd")
+    macd_signal_v = indicators.get("macd_signal_value")
+    if macd_v is not None and macd_signal_v is not None:
+        snapshot["macd_minus_signal"] = round(float(macd_v) - float(macd_signal_v), 5)
+
+    snapshot["recent_candles"] = _summarise_recent_candles(candles_df, n=5)
+    snapshot["recent_change_pct"] = _recent_change_pct(candles_df, n=5)
+    return snapshot
+
+
+def _volatility_label(atr_pips):
+    if atr_pips is None:
+        return "unknown"
+    try:
+        value = float(atr_pips)
+    except (TypeError, ValueError):
+        return "unknown"
+    if value < 8:
+        return "low"
+    if value <= 20:
+        return "normal"
+    return "high"
+
+
+def _summarise_recent_candles(candles_df, n=5):
+    if candles_df is None or candles_df.empty:
+        return []
+    tail = candles_df.tail(n)
+    summary = []
+    for index, row in tail.iterrows():
+        summary.append({
+            "time": index.isoformat() if hasattr(index, "isoformat") else str(index),
+            "open": round(float(row["open"]), 5),
+            "high": round(float(row["high"]), 5),
+            "low": round(float(row["low"]), 5),
+            "close": round(float(row["close"]), 5),
+        })
+    return summary
+
+
+def _recent_change_pct(candles_df, n=5):
+    if candles_df is None or candles_df.empty:
+        return None
+    tail = candles_df.tail(n)
+    if len(tail) < 2:
+        return None
+    first_close = float(tail.iloc[0]["close"])
+    last_close = float(tail.iloc[-1]["close"])
+    if first_close == 0:
+        return None
+    return round((last_close - first_close) / first_close * 100, 4)
+
+
+def _build_combined_reason(ai_result, technical_result, combined, score_combined_signal,
+                           ai_score, technical_score, combined_score):
+    ai_signal = ai_result.get("signal", "NEUTRAL")
+    tech_signal = technical_result.get("signal", "NEUTRAL")
+    base = (
+        f"IA={ai_signal} (score {ai_score:+.2f}); "
+        f"técnica={tech_signal} (score {technical_score:+.2f}); "
+        f"score combinado={combined_score:+.2f} -> {score_combined_signal}."
+    )
+    if combined.get("agreement"):
+        base += " Concordância IA/técnica."
+    elif ai_signal == "NEUTRAL" or tech_signal == "NEUTRAL":
+        base += " Pelo menos um componente é NEUTRAL — regra estrita força NEUTRAL."
+    elif ai_signal != tech_signal:
+        base += " Discordância IA vs técnica — regra estrita força NEUTRAL."
+    return base
+
+
+def _build_blocking_reason(combined, trade_decision):
+    block_reason = trade_decision.get("block_reason")
+    if block_reason:
+        return block_reason
+    if combined.get("signal") == "NEUTRAL":
+        return "sinal combinado é NEUTRAL"
+    if combined.get("hold_off"):
+        return "hold_off ativo"
+    return ""
+
+
+def _select_gating_signal(strict_combined, score_signal, combined_score,
+                          shadow_combined, mode):
+    """Devolve a versão de "combined" usada para o gating real.
+
+    - "strict" (default): a regra 3/3 actual. Mantém o comportamento conservador.
+    - "score": usa o score_combined_signal e |combined_score|*100 como confidence.
+      Bom quando os paper trades já validaram o threshold.
+    - "shadow": usa shadow_combined (mistura IA + shadow técnica 2/3).
+
+    Em todos os modos respeitamos `hold_off` da IA — ele só fica True quando
+    há eventos imminent ou contradições fortes.
+    """
+    mode = (mode or "strict").strip().lower()
+    if mode not in {"strict", "score", "shadow"}:
+        mode = "strict"
+
+    if mode == "score":
+        confidence = int(round(abs(combined_score or 0) * 100))
+        return {
+            "signal": score_signal or "NEUTRAL",
+            "confidence": confidence,
+            "hold_off": bool(strict_combined.get("hold_off", True)),
+            "reasoning": (strict_combined.get("reasoning", "") or "")
+            + f" [gating=score, combined_score={(combined_score or 0):+.2f}]",
+            "agreement": bool(strict_combined.get("agreement", False)),
+        }, mode
+
+    if mode == "shadow":
+        return {
+            "signal": shadow_combined.get("signal", "NEUTRAL") or "NEUTRAL",
+            "confidence": int(shadow_combined.get("confidence", 0) or 0),
+            "hold_off": bool(strict_combined.get("hold_off", True)),
+            "reasoning": (shadow_combined.get("reason", "") or "")
+            + " [gating=shadow]",
+            "agreement": bool(strict_combined.get("agreement", False)),
+        }, mode
+
+    return dict(strict_combined), "strict"
+
+
+def _build_paper_trade(decision_id, pair, timeframe, direction, current_price,
+                       atr_pips, source, signal_source, created_at_dt):
+    if direction not in ("BUY", "SELL"):
+        return None
+    if current_price is None or current_price <= 0:
+        return None
+
+    sl_mult = float(os.getenv("PAPER_TRADE_SL_MULT") or PAPER_TRADE_DEFAULT_SL_MULT)
+    tp_mult = float(os.getenv("PAPER_TRADE_TP_MULT") or PAPER_TRADE_DEFAULT_TP_MULT)
+    expiry_bars = int(float(os.getenv("PAPER_TRADE_EXPIRY_BARS") or PAPER_TRADE_DEFAULT_EXPIRY_BARS))
+
+    if atr_pips is None or atr_pips <= 0:
+        atr_pips_used = 15.0
+    else:
+        atr_pips_used = float(atr_pips)
+
+    sl_pips = round(atr_pips_used * sl_mult, 1)
+    tp_pips = round(atr_pips_used * tp_mult, 1)
+    atr_price = atr_pips_used * PIP_SIZE
+    if direction == "BUY":
+        sl = current_price - sl_pips * PIP_SIZE
+        tp = current_price + tp_pips * PIP_SIZE
+    else:
+        sl = current_price + sl_pips * PIP_SIZE
+        tp = current_price - tp_pips * PIP_SIZE
+
+    bar_hours = TIMEFRAME_HOURS.get(timeframe, 1)
+    expiry_dt = created_at_dt + timedelta(hours=bar_hours * expiry_bars)
+
+    return {
+        "decision_id": decision_id,
+        "pair": pair,
+        "timeframe": timeframe,
+        "direction": direction,
+        "entry_price": round(float(current_price), 5),
+        "simulated_sl": round(float(sl), 5),
+        "simulated_tp": round(float(tp), 5),
+        "sl_pips": sl_pips,
+        "tp_pips": tp_pips,
+        "atr_pips": round(atr_pips_used, 1),
+        "atr_price": round(atr_price, 5),
+        "status": "open",
+        "source": source,
+        "signal_source": signal_source,
+        "created_at": created_at_dt.isoformat(),
+        "expiry_at": expiry_dt.isoformat(),
+    }
+
+
 def _build_decision_entry(
     pair,
     timeframe,
@@ -461,10 +667,57 @@ def _build_decision_entry(
     shadow_combined,
     trade_decision,
     signature,
+    candles_df,
+    provider,
+    scoring_config,
+    ai_score=None,
+    technical_score=None,
+    shadow_score=None,
+    combined_score=None,
+    score_combined_signal=None,
+    gating_mode="strict",
+    gating_signal=None,
+    gating_confidence=None,
 ):
     indicators = technical_result.get("indicators", {})
     details = _technical_details(technical_result)
     order = trade_decision.get("simulated_order") or {}
+
+    if ai_score is None:
+        ai_score = scoring.signal_score(
+            ai_result.get("signal"), ai_result.get("confidence")
+        )
+    if technical_score is None:
+        technical_score = scoring.technical_votes_score(
+            details["rsi_vote"], details["ema_vote"], details["macd_vote"]
+        )
+    if shadow_score is None:
+        shadow_score = scoring.signal_score(
+            details["shadow_technical_signal"],
+            details["shadow_technical_confidence"],
+        )
+    if combined_score is None:
+        combined_score = scoring.combine_scores(
+            ai_score, technical_score, shadow_score=shadow_score, config=scoring_config
+        )
+    if score_combined_signal is None:
+        score_combined_signal = scoring.score_to_signal(combined_score, scoring_config)
+
+    ai_features_snapshot = _build_features_snapshot(technical_result, candles_df, ai_result)
+
+    ai_reason = (
+        ai_result.get("reasoning")
+        or combined.get("reasoning")
+        or "(sem raciocínio devolvido pela IA)"
+    )
+
+    combined_reason = _build_combined_reason(
+        ai_result, technical_result, combined, score_combined_signal,
+        ai_score, technical_score, combined_score,
+    )
+
+    blocking_reason = _build_blocking_reason(combined, trade_decision)
+
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "pair": pair,
@@ -507,6 +760,22 @@ def _build_decision_entry(
         "stop_loss_pips_used": order.get("stop_loss_pips"),
         "take_profit_pips_used": order.get("take_profit_pips"),
         "sl_tp_mode": order.get("sl_tp_mode"),
+        "ai_score": round(ai_score, 4),
+        "ai_confidence_score": round(scoring.confidence_to_unit(ai_result.get("confidence")), 4),
+        "ai_reason": ai_reason,
+        "ai_features_snapshot": ai_features_snapshot,
+        "ai_model_version": model_version_for_provider(
+            ai_result.get("provider") or provider
+        ),
+        "technical_score": round(technical_score, 4),
+        "shadow_score": round(shadow_score, 4),
+        "combined_score": combined_score,
+        "combined_reason": combined_reason,
+        "blocking_reason": blocking_reason,
+        "score_combined_signal": score_combined_signal,
+        "gating_mode": gating_mode,
+        "gating_signal": gating_signal or combined.get("signal"),
+        "gating_confidence": gating_confidence if gating_confidence is not None else combined.get("confidence"),
     }
 
 
@@ -526,10 +795,52 @@ def _save_jsonl(entry):
 
 def _save_sqlite_decision(conn, entry):
     try:
-        database.save_decision(conn, entry)
-        return True, ""
+        decision_id = database.save_decision(conn, entry)
+        return True, "", decision_id
     except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+        return False, f"{type(e).__name__}: {e}", None
+
+
+def _maybe_create_paper_trade(conn, decision_id, pair, timeframe, ai_result,
+                              combined, current_price, atr_pips, created_at_dt):
+    if decision_id is None:
+        return None
+
+    ai_signal = ai_result.get("signal", "NEUTRAL")
+    combined_signal = combined.get("signal", "NEUTRAL")
+
+    if combined_signal in ("BUY", "SELL"):
+        direction = combined_signal
+        source = "combined"
+        signal_source = "combined_signal"
+    elif ai_signal in ("BUY", "SELL"):
+        direction = ai_signal
+        source = "ai_only"
+        signal_source = "ai_signal"
+    else:
+        return None
+
+    paper_trade = _build_paper_trade(
+        decision_id=decision_id,
+        pair=pair,
+        timeframe=timeframe,
+        direction=direction,
+        current_price=current_price,
+        atr_pips=atr_pips,
+        source=source,
+        signal_source=signal_source,
+        created_at_dt=created_at_dt,
+    )
+    if paper_trade is None:
+        return None
+
+    try:
+        paper_trade_id = database.create_paper_trade(conn, paper_trade)
+        database.link_decision_to_paper_trade(conn, decision_id, paper_trade_id)
+        return paper_trade_id
+    except Exception as e:
+        print(f"[paper-trade] falha ao criar trade: {type(e).__name__}: {e}")
+        return None
 
 
 def _yes_no(value):
@@ -715,20 +1026,52 @@ def main():
     print()
     _print_sources(news_sources, event_sources)
 
-    print("\n[3/4] A analisar com IA...")
-    ai_result, input_hash, ai_origin = _get_ai_result(conn, cache_config, provider, relevant_news, events)
-    print(f"      análise IA: {ai_origin} ({input_hash[:12]})")
-
-    print("[4/4] A correr análise técnica...")
+    print("\n[3/4] A correr análise técnica...")
     candles, candles_origin = _get_candles(conn, cache_config, count=100)
     technical_result = analyse_technical(candles, PAIR)
     print(f"      {len(candles)} candles lidas ({candles_origin})")
+
+    print("[4/4] A analisar com IA (com snapshot técnico)...")
+    ai_result, input_hash, ai_origin = _get_ai_result(
+        conn, cache_config, provider, relevant_news, events, technical=technical_result
+    )
+    print(f"      análise IA: {ai_origin} ({input_hash[:12]})")
 
     print()
     combined = _combine_signals(ai_result, technical_result)
     shadow_combined = _shadow_combine(ai_result, technical_result)
     current_price = technical_result.get("indicators", {}).get("current_price")
     atr_pips = technical_result.get("indicators", {}).get("atr_pips")
+
+    # Computar scores antes do gating para podermos escolher o sinal efectivo.
+    scoring_config = scoring.load_scoring_config()
+    ai_score_value = scoring.signal_score(
+        ai_result.get("signal"), ai_result.get("confidence")
+    )
+    technical_score_value = scoring.technical_votes_score(
+        technical_result.get("indicators", {}).get("rsi_vote",
+            technical_result.get("indicators", {}).get("rsi_signal", "neutral")),
+        technical_result.get("indicators", {}).get("ema_vote",
+            technical_result.get("indicators", {}).get("ema_trend", "neutral")),
+        technical_result.get("indicators", {}).get("macd_vote",
+            technical_result.get("indicators", {}).get("macd_signal", "neutral")),
+    )
+    shadow_score_value = scoring.signal_score(
+        technical_result.get("shadow_technical_signal"),
+        technical_result.get("shadow_technical_confidence"),
+    )
+    combined_score_value = scoring.combine_scores(
+        ai_score_value, technical_score_value,
+        shadow_score=shadow_score_value, config=scoring_config,
+    )
+    score_signal_value = scoring.score_to_signal(combined_score_value, scoring_config)
+
+    gating_mode = (os.getenv("GATING_MODE") or "strict").strip().lower()
+    gating_combined, gating_mode_used = _select_gating_signal(
+        combined, score_signal_value, combined_score_value,
+        shadow_combined, gating_mode,
+    )
+
     event_risk = database.find_high_impact_event_nearby(
         conn,
         _env_int("EVENT_BLOCK_WINDOW_MINUTES", 120),
@@ -736,7 +1079,7 @@ def main():
     )
     trade_decision = evaluate_trade(
         PAIR,
-        combined,
+        gating_combined,
         current_price,
         event_risk,
         atr_pips=atr_pips,
@@ -746,6 +1089,15 @@ def main():
     print(
         f"Shadow combined: {shadow_combined['signal']} "
         f"({shadow_combined['confidence']}%) — {shadow_combined['reason']}"
+    )
+    print(
+        f"Score: AI={ai_score_value:+.2f} tech={technical_score_value:+.2f} "
+        f"shadow={shadow_score_value:+.2f} combined={combined_score_value:+.2f} "
+        f"-> {score_signal_value}"
+    )
+    print(
+        f"Gating mode: {gating_mode_used} -> {gating_combined['signal']} "
+        f"({gating_combined['confidence']}%)"
     )
 
     source_status = {
@@ -768,14 +1120,40 @@ def main():
         shadow_combined,
         trade_decision,
         signature,
+        candles,
+        provider,
+        scoring_config,
+        ai_score=ai_score_value,
+        technical_score=technical_score_value,
+        shadow_score=shadow_score_value,
+        combined_score=combined_score_value,
+        score_combined_signal=score_signal_value,
+        gating_mode=gating_mode_used,
+        gating_signal=gating_combined.get("signal"),
+        gating_confidence=gating_combined.get("confidence"),
     )
 
     if is_duplicate:
         jsonl_saved, jsonl_error = False, f"duplicado de {last_signature}"
         sqlite_saved, sqlite_error = False, f"duplicado de {last_signature}"
+        decision_id = None
     else:
         jsonl_saved, jsonl_error = _save_jsonl(decision_entry)
-        sqlite_saved, sqlite_error = _save_sqlite_decision(conn, decision_entry)
+        sqlite_saved, sqlite_error, decision_id = _save_sqlite_decision(conn, decision_entry)
+        paper_trade_id = _maybe_create_paper_trade(
+            conn,
+            decision_id=decision_id,
+            pair=PAIR,
+            timeframe=TIMEFRAME,
+            ai_result=ai_result,
+            combined=combined,
+            current_price=current_price,
+            atr_pips=atr_pips,
+            created_at_dt=datetime.now(timezone.utc),
+        )
+        if paper_trade_id is not None:
+            print(f"[paper-trade] criado #{paper_trade_id} ({decision_entry['ai_signal']}/"
+                  f"{decision_entry['combined_signal']})")
 
     outcome_stats = database.update_decision_outcomes(
         conn,

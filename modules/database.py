@@ -114,9 +114,52 @@ def init_db(conn):
             simulated_order_json TEXT,
             created_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS gate_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            checked_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            total_trades INTEGER,
+            wins INTEGER,
+            losses INTEGER,
+            expired INTEGER,
+            win_rate REAL,
+            profit_factor REAL,
+            avg_r REAL,
+            max_streak_losses INTEGER,
+            max_drawdown_pct REAL,
+            details_json TEXT NOT NULL,
+            config_json TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS paper_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            decision_id INTEGER,
+            pair TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            simulated_sl REAL NOT NULL,
+            simulated_tp REAL NOT NULL,
+            sl_pips REAL,
+            tp_pips REAL,
+            atr_pips REAL,
+            atr_price REAL,
+            status TEXT NOT NULL DEFAULT 'open',
+            source TEXT,
+            signal_source TEXT,
+            created_at TEXT NOT NULL,
+            expiry_at TEXT,
+            close_price REAL,
+            closed_at TEXT,
+            close_reason TEXT,
+            result_pips REAL,
+            result_r_multiple REAL
+        );
         """
     )
     _ensure_decisions_columns(conn)
+    _ensure_paper_trades_columns(conn)
     conn.commit()
 
 
@@ -160,10 +203,58 @@ def _ensure_decisions_columns(conn):
         "stop_loss_pips_used": "REAL",
         "take_profit_pips_used": "REAL",
         "sl_tp_mode": "TEXT",
+        "ai_score": "REAL",
+        "ai_confidence_score": "REAL",
+        "ai_reason": "TEXT",
+        "ai_features_snapshot": "TEXT",
+        "ai_model_version": "TEXT",
+        "technical_score": "REAL",
+        "shadow_score": "REAL",
+        "combined_score": "REAL",
+        "combined_reason": "TEXT",
+        "blocking_reason": "TEXT",
+        "score_combined_signal": "TEXT",
+        "paper_trade_id": "INTEGER",
+        "gating_mode": "TEXT",
+        "gating_signal": "TEXT",
+        "gating_confidence": "INTEGER",
     }
     for name, column_type in columns.items():
         if name not in existing:
             conn.execute(f"ALTER TABLE decisions ADD COLUMN {name} {column_type}")
+
+
+def _ensure_paper_trades_columns(conn):
+    existing = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(paper_trades)").fetchall()
+    }
+    columns = {
+        "decision_id": "INTEGER",
+        "pair": "TEXT",
+        "timeframe": "TEXT",
+        "direction": "TEXT",
+        "entry_price": "REAL",
+        "simulated_sl": "REAL",
+        "simulated_tp": "REAL",
+        "sl_pips": "REAL",
+        "tp_pips": "REAL",
+        "atr_pips": "REAL",
+        "atr_price": "REAL",
+        "status": "TEXT",
+        "source": "TEXT",
+        "signal_source": "TEXT",
+        "created_at": "TEXT",
+        "expiry_at": "TEXT",
+        "close_price": "REAL",
+        "closed_at": "TEXT",
+        "close_reason": "TEXT",
+        "result_pips": "REAL",
+        "result_r_multiple": "REAL",
+    }
+    for name, column_type in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE paper_trades ADD COLUMN {name} {column_type}")
 
 
 def _rows_to_dicts(rows):
@@ -381,7 +472,13 @@ def save_ai_analysis(conn, pair, analysis_date, input_hash, result):
 
 
 def save_decision(conn, entry):
-    conn.execute(
+    features_snapshot = entry.get("ai_features_snapshot")
+    if isinstance(features_snapshot, (dict, list)):
+        features_snapshot_json = json.dumps(features_snapshot, ensure_ascii=False)
+    else:
+        features_snapshot_json = features_snapshot
+
+    cursor = conn.execute(
         """
         INSERT INTO decisions
         (timestamp, pair, timeframe, news_source_status, calendar_source_status,
@@ -393,8 +490,12 @@ def save_decision(conn, entry):
          technical_signal, ai_signal, combined_signal, confidence, hold_off,
          current_price, trade_allowed, block_reason, dangerous_event_nearby,
          dangerous_event_reason, simulated_order_json, decision_signature,
-         stop_loss_pips_used, take_profit_pips_used, sl_tp_mode, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         stop_loss_pips_used, take_profit_pips_used, sl_tp_mode,
+         ai_score, ai_confidence_score, ai_reason, ai_features_snapshot,
+         ai_model_version, technical_score, shadow_score, combined_score,
+         combined_reason, blocking_reason, score_combined_signal,
+         gating_mode, gating_signal, gating_confidence, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             entry["timestamp"],
@@ -440,10 +541,266 @@ def save_decision(conn, entry):
             entry.get("stop_loss_pips_used"),
             entry.get("take_profit_pips_used"),
             entry.get("sl_tp_mode"),
+            entry.get("ai_score"),
+            entry.get("ai_confidence_score"),
+            entry.get("ai_reason"),
+            features_snapshot_json,
+            entry.get("ai_model_version"),
+            entry.get("technical_score"),
+            entry.get("shadow_score"),
+            entry.get("combined_score"),
+            entry.get("combined_reason"),
+            entry.get("blocking_reason"),
+            entry.get("score_combined_signal"),
+            entry.get("gating_mode"),
+            entry.get("gating_signal"),
+            entry.get("gating_confidence"),
             utc_now(),
         ),
     )
     conn.commit()
+    return cursor.lastrowid
+
+
+def link_decision_to_paper_trade(conn, decision_id, paper_trade_id):
+    if decision_id is None or paper_trade_id is None:
+        return
+    conn.execute(
+        "UPDATE decisions SET paper_trade_id = ? WHERE id = ?",
+        (paper_trade_id, decision_id),
+    )
+    conn.commit()
+
+
+def create_paper_trade(conn, paper_trade):
+    cursor = conn.execute(
+        """
+        INSERT INTO paper_trades
+        (decision_id, pair, timeframe, direction, entry_price, simulated_sl,
+         simulated_tp, sl_pips, tp_pips, atr_pips, atr_price, status, source,
+         signal_source, created_at, expiry_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            paper_trade.get("decision_id"),
+            paper_trade["pair"],
+            paper_trade["timeframe"],
+            paper_trade["direction"],
+            paper_trade["entry_price"],
+            paper_trade["simulated_sl"],
+            paper_trade["simulated_tp"],
+            paper_trade.get("sl_pips"),
+            paper_trade.get("tp_pips"),
+            paper_trade.get("atr_pips"),
+            paper_trade.get("atr_price"),
+            paper_trade.get("status", "open"),
+            paper_trade.get("source"),
+            paper_trade.get("signal_source"),
+            paper_trade.get("created_at", utc_now()),
+            paper_trade.get("expiry_at"),
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_open_paper_trades(conn, pair=None):
+    if pair:
+        rows = conn.execute(
+            "SELECT * FROM paper_trades WHERE status = 'open' AND pair = ? ORDER BY id ASC",
+            (pair,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM paper_trades WHERE status = 'open' ORDER BY id ASC"
+        ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def update_paper_trade_result(
+    conn,
+    paper_trade_id,
+    status,
+    close_price,
+    closed_at,
+    close_reason,
+    result_pips,
+    result_r_multiple,
+):
+    conn.execute(
+        """
+        UPDATE paper_trades
+        SET status = ?, close_price = ?, closed_at = ?, close_reason = ?,
+            result_pips = ?, result_r_multiple = ?
+        WHERE id = ?
+        """,
+        (
+            status,
+            close_price,
+            closed_at,
+            close_reason,
+            result_pips,
+            result_r_multiple,
+            paper_trade_id,
+        ),
+    )
+    conn.commit()
+
+
+def get_market_candles_between(conn, pair, timeframe, start_iso, end_iso, provider=None):
+    if provider:
+        rows = conn.execute(
+            """
+            SELECT candle_time, open, high, low, close, volume
+            FROM market_candles
+            WHERE pair = ? AND timeframe = ? AND provider = ?
+              AND candle_time >= ? AND candle_time <= ?
+            ORDER BY candle_time ASC
+            """,
+            (pair, timeframe, provider, start_iso, end_iso),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT candle_time, open, high, low, close, volume
+            FROM market_candles
+            WHERE pair = ? AND timeframe = ?
+              AND candle_time >= ? AND candle_time <= ?
+            ORDER BY candle_time ASC
+            """,
+            (pair, timeframe, start_iso, end_iso),
+        ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def get_paper_trades(conn, limit=200, status=None, source=None):
+    clauses = []
+    params = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if source:
+        clauses.append("source = ?")
+        params.append(source)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
+    rows = conn.execute(
+        f"""
+        SELECT * FROM paper_trades
+        {where}
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        tuple(params),
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def save_gate_check(conn, snapshot):
+    overall = snapshot.get("overall", {})
+    metrics = overall.get("metrics", {})
+    config = snapshot.get("config", {})
+    cursor = conn.execute(
+        """
+        INSERT INTO gate_checks
+        (checked_at, status, total_trades, wins, losses, expired,
+         win_rate, profit_factor, avg_r, max_streak_losses,
+         max_drawdown_pct, details_json, config_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            snapshot.get("checked_at", utc_now()),
+            overall.get("status", "partial"),
+            (metrics.get("wins", 0) or 0)
+            + (metrics.get("losses", 0) or 0)
+            + (metrics.get("expired", 0) or 0),
+            metrics.get("wins"),
+            metrics.get("losses"),
+            metrics.get("expired"),
+            metrics.get("win_rate"),
+            metrics.get("profit_factor"),
+            metrics.get("avg_r"),
+            metrics.get("max_losing_streak"),
+            metrics.get("max_drawdown_pct"),
+            json.dumps(snapshot, ensure_ascii=False),
+            json.dumps(config, ensure_ascii=False),
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_recent_gate_checks(conn, limit=20):
+    rows = conn.execute(
+        """
+        SELECT id, checked_at, status, total_trades, wins, losses, expired,
+               win_rate, profit_factor, avg_r, max_streak_losses, max_drawdown_pct
+        FROM gate_checks
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def get_latest_gate_check(conn):
+    row = conn.execute(
+        """
+        SELECT details_json
+        FROM gate_checks
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return json.loads(row["details_json"])
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def get_paper_trades_summary(conn, source=None, direction=None):
+    clauses = []
+    params = []
+    if source:
+        clauses.append("source = ?")
+        params.append(source)
+    if direction:
+        clauses.append("direction = ?")
+        params.append(direction)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM paper_trades {where}",
+        tuple(params),
+    ).fetchall()
+    trades = _rows_to_dicts(rows)
+    total = len(trades)
+    wins = sum(1 for t in trades if t.get("status") == "win")
+    losses = sum(1 for t in trades if t.get("status") == "loss")
+    expired = sum(1 for t in trades if t.get("status") == "expired")
+    open_count = sum(1 for t in trades if t.get("status") == "open")
+    closed = wins + losses
+    pips_values = [t.get("result_pips") for t in trades if t.get("result_pips") is not None]
+    r_values = [t.get("result_r_multiple") for t in trades if t.get("result_r_multiple") is not None]
+    avg_pips = round(sum(pips_values) / len(pips_values), 1) if pips_values else None
+    avg_r = round(sum(r_values) / len(r_values), 2) if r_values else None
+    win_rate = round(wins / closed * 100, 1) if closed else None
+    best = max(pips_values) if pips_values else None
+    worst = min(pips_values) if pips_values else None
+    return {
+        "total": total,
+        "open": open_count,
+        "wins": wins,
+        "losses": losses,
+        "expired": expired,
+        "win_rate": win_rate,
+        "avg_pips": avg_pips,
+        "avg_r": avg_r,
+        "best_pips": round(best, 1) if best is not None else None,
+        "worst_pips": round(worst, 1) if worst is not None else None,
+    }
 
 
 def get_last_decision_signature(conn, pair):

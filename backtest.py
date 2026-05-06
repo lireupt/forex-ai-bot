@@ -1,8 +1,14 @@
-"""Backtest do sinal técnico (estrito + shadow) sobre candles históricas.
+"""Backtest do sinal técnico (estrito + shadow + score-based) sobre candles
+históricas.
 
 Usa a mesma `analyse_technical` do live para que o backtest não divirja da
-produção. Para cada barra com indicadores válidos, regista o sinal e calcula
-os pips após N barras (1h/4h/24h).
+produção. Para cada barra com indicadores válidos, regista os sinais e
+calcula os pips após N barras (1h/4h/24h).
+
+Inclui agora o `score-based combined`: como não temos histórico de AI score
+nem podemos re-gerar AI a cada candle, usamos `ai_score=0` (neutral) e o
+`combined_score` cai em cima do `technical_score` (com peso default 0.4).
+Útil para isolar o que a técnica + threshold dariam.
 
 Uso:
     python backtest.py                       # 720 candles 1h, EUR/USD
@@ -17,6 +23,7 @@ from collections import defaultdict
 import pandas as pd
 import yfinance as yf
 
+from modules import scoring
 from modules.technical import analyse as analyse_technical
 
 PIP_SIZE = 0.0001
@@ -86,6 +93,29 @@ def _signed_pips(signal, entry, future):
     return delta / PIP_SIZE
 
 
+def _score_signal_for_window(result, scoring_config):
+    """Calcula o score combinado e devolve (signal, score) usando AI=0
+    (neutral) e a técnica avaliada na window. Reflete o que o threshold
+    produziria se a IA não inclinasse o resultado."""
+    indicators = result.get("indicators", {})
+    technical_score = scoring.technical_votes_score(
+        indicators.get("rsi_vote", indicators.get("rsi_signal", "neutral")),
+        indicators.get("ema_vote", indicators.get("ema_trend", "neutral")),
+        indicators.get("macd_vote", indicators.get("macd_signal", "neutral")),
+    )
+    shadow_score = scoring.signal_score(
+        result.get("shadow_technical_signal"),
+        result.get("shadow_technical_confidence"),
+    )
+    combined_score = scoring.combine_scores(
+        ai_score=0.0,
+        technical_score=technical_score,
+        shadow_score=shadow_score,
+        config=scoring_config,
+    )
+    return scoring.score_to_signal(combined_score, scoring_config), combined_score
+
+
 def run_backtest(pair, timeframe, period):
     df = fetch_history(pair, timeframe, period)
     if df.empty:
@@ -99,8 +129,9 @@ def run_backtest(pair, timeframe, period):
 
     horizons = _bars_per_horizon(timeframe)
     max_horizon_bars = max(horizons.values())
+    scoring_config = scoring.load_scoring_config()
 
-    signals = {"strict": [], "shadow": []}
+    signals = {"strict": [], "shadow": [], "score": []}
 
     for i in range(WARMUP_BARS, total_bars - max_horizon_bars):
         window = df.iloc[: i + 1]
@@ -110,8 +141,15 @@ def run_backtest(pair, timeframe, period):
         if entry is None:
             continue
 
-        for source_key, sig_key in (("strict", "signal"), ("shadow", "shadow_technical_signal")):
-            signal = result.get(sig_key)
+        score_signal, _ = _score_signal_for_window(result, scoring_config)
+
+        triplets = (
+            ("strict", result.get("signal")),
+            ("shadow", result.get("shadow_technical_signal")),
+            ("score", score_signal),
+        )
+
+        for source_key, signal in triplets:
             if signal not in ("BUY", "SELL"):
                 continue
             outcomes = {}
@@ -129,7 +167,7 @@ def run_backtest(pair, timeframe, period):
                 "outcomes": outcomes,
             })
 
-    _print_summary(pair, timeframe, period, total_bars, signals)
+    _print_summary(pair, timeframe, period, total_bars, signals, scoring_config)
 
 
 def _summarise(entries, horizon):
@@ -149,15 +187,25 @@ def _summarise(entries, horizon):
     }
 
 
-def _print_summary(pair, timeframe, period, total_bars, signals):
+def _print_summary(pair, timeframe, period, total_bars, signals, scoring_config):
     print()
     print(f"=== Backtest {pair} {timeframe} ({period}) ===")
     print(f"Candles analisadas: {total_bars}")
     print(f"Bar warmup: {WARMUP_BARS}")
+    print(
+        f"Score thresholds: BUY>={scoring_config['buy_threshold']:+.2f} "
+        f"SELL<={scoring_config['sell_threshold']:+.2f} "
+        f"(pesos AI={scoring_config['ai_weight']:.2f} tech={scoring_config['technical_weight']:.2f})"
+    )
     print()
 
-    for source_key, label in (("strict", "Estrito (3/3)"), ("shadow", "Shadow (2/3)")):
-        entries = signals[source_key]
+    label_map = (
+        ("strict", "Estrito (3/3)"),
+        ("shadow", "Shadow (2/3)"),
+        ("score", "Score-based (AI=0, técnica)"),
+    )
+    for source_key, label in label_map:
+        entries = signals.get(source_key, [])
         by_signal = defaultdict(list)
         for e in entries:
             by_signal[e["signal"]].append(e)
