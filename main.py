@@ -497,6 +497,14 @@ def _build_features_snapshot(technical_result, candles_df, ai_result):
 
 
 def _ai_reason(ai_result, combined=None):
+    analysis_text = _ai_analysis_text(ai_result, combined=combined)
+    sentences = _split_sentences(analysis_text)
+    if sentences:
+        return " ".join(sentences[:2])
+    return analysis_text
+
+
+def _ai_analysis_text(ai_result, combined=None, features_snapshot=None):
     for key in ("reasoning", "reason", "explanation", "analysis"):
         value = ai_result.get(key)
         if value:
@@ -507,6 +515,9 @@ def _ai_reason(ai_result, combined=None):
         if value:
             return str(value).strip()
 
+    if features_snapshot:
+        return _fallback_ai_analysis(ai_result, features_snapshot)
+
     signal = ai_result.get("signal") or "NEUTRAL"
     confidence = ai_result.get("confidence")
     risk = ai_result.get("risk_level")
@@ -516,6 +527,44 @@ def _ai_reason(ai_result, combined=None):
     if risk:
         parts.append(f"e risco {risk}")
     return " ".join(parts) + ". A resposta não incluiu raciocínio detalhado."
+
+
+def _fallback_ai_analysis(ai_result, features_snapshot):
+    signal = ai_result.get("signal") or features_snapshot.get("ai_signal") or "NEUTRAL"
+    confidence = ai_result.get("confidence", features_snapshot.get("ai_confidence"))
+    risk = ai_result.get("risk_level") or features_snapshot.get("ai_risk_level") or "n/a"
+    close = features_snapshot.get("close")
+    rsi = features_snapshot.get("rsi")
+    trend = features_snapshot.get("trend")
+    momentum = features_snapshot.get("momentum")
+    atr_pips = features_snapshot.get("atr_pips")
+    volatility = features_snapshot.get("volatility_level")
+    recent_change = features_snapshot.get("recent_change_pct")
+    return (
+        f"IA devolveu {signal} com confiança {confidence}% e risco {risk}. "
+        f"Snapshot usado: preço={_fmt(close)}, RSI={_fmt(rsi)}, tendência EMA={trend or 'n/a'}, "
+        f"momentum MACD={momentum or 'n/a'}, ATR={_fmt(atr_pips, ' pips')} "
+        f"({volatility or 'unknown'}), variação recente={_fmt(recent_change, '%')}. "
+        "A resposta do provider não incluiu uma narrativa detalhada, por isso esta análise foi gerada deterministicamente a partir dos inputs registados."
+    )
+
+
+def _split_sentences(text):
+    if not text:
+        return []
+    sentences = []
+    current = []
+    for char in str(text).strip():
+        current.append(char)
+        if char in ".!?":
+            sentence = "".join(current).strip()
+            if sentence:
+                sentences.append(sentence)
+            current = []
+    tail = "".join(current).strip()
+    if tail:
+        sentences.append(tail)
+    return sentences
 
 
 def _ai_model_version(ai_result, provider):
@@ -734,7 +783,15 @@ def _build_decision_entry(
 
     ai_features_snapshot = _build_features_snapshot(technical_result, candles_df, ai_result)
 
-    ai_reason = _ai_reason(ai_result, combined)
+    ai_analysis_text = _ai_analysis_text(
+        ai_result,
+        combined=combined,
+        features_snapshot=ai_features_snapshot,
+    )
+    ai_reason = _ai_reason(
+        {**ai_result, "reasoning": ai_analysis_text},
+        combined,
+    )
 
     combined_reason = _build_combined_reason(
         ai_result, technical_result, combined, score_combined_signal,
@@ -787,6 +844,7 @@ def _build_decision_entry(
         "sl_tp_mode": order.get("sl_tp_mode"),
         "ai_score": round(ai_score, 4),
         "ai_confidence_score": round(scoring.confidence_to_unit(ai_result.get("confidence")), 4),
+        "ai_analysis_text": ai_analysis_text,
         "ai_reason": ai_reason,
         "ai_features_snapshot": ai_features_snapshot,
         "ai_model_version": _ai_model_version(ai_result, provider),

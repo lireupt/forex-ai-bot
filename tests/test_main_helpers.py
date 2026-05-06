@@ -120,6 +120,14 @@ class TestBuildFeaturesSnapshot:
 
 
 class TestAIObservability:
+    def test_ai_analysis_text_uses_full_reasoning(self):
+        text = main._ai_analysis_text({
+            "signal": "BUY",
+            "confidence": 62,
+            "reasoning": "Primeira frase. Segunda frase. Terceira frase.",
+        })
+        assert text == "Primeira frase. Segunda frase. Terceira frase."
+
     def test_ai_reason_prefers_reasoning(self):
         reason = main._ai_reason(
             {"signal": "BUY", "confidence": 62, "reasoning": "Fundamental e técnico alinhados."},
@@ -135,6 +143,30 @@ class TestAIObservability:
         reason = main._ai_reason({"signal": "NEUTRAL", "confidence": 0, "risk_level": "HIGH"})
         assert "NEUTRAL" in reason
         assert "raciocínio detalhado" in reason
+
+    def test_ai_reason_is_short_summary(self):
+        reason = main._ai_reason({
+            "signal": "NEUTRAL",
+            "confidence": 40,
+            "reasoning": "Primeira frase. Segunda frase. Terceira frase.",
+        })
+        assert reason == "Primeira frase. Segunda frase."
+
+    def test_ai_analysis_text_fallback_uses_features(self):
+        text = main._ai_analysis_text(
+            {"signal": "NEUTRAL", "confidence": 40, "risk_level": "MEDIUM"},
+            features_snapshot={
+                "close": 1.175,
+                "rsi": 54.6,
+                "trend": "bullish",
+                "momentum": "bearish",
+                "atr_pips": 12.2,
+                "volatility_level": "normal",
+                "recent_change_pct": -0.1,
+            },
+        )
+        assert "Snapshot usado" in text
+        assert "1.175" in text
 
     def test_ai_model_version_prefers_explicit_model(self):
         version = main._ai_model_version({"provider": "groq", "model_version": "groq:test-model"}, "claude")

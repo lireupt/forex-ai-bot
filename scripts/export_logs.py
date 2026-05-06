@@ -91,6 +91,48 @@ def _model_version(row):
     return "unknown"
 
 
+AI_ANALYSIS_UNAVAILABLE = "Análise IA não disponível para esta decisão."
+
+
+def _split_sentences(text):
+    if not text:
+        return []
+    sentences = []
+    current = []
+    for char in str(text).strip():
+        current.append(char)
+        if char in ".!?":
+            sentence = "".join(current).strip()
+            if sentence:
+                sentences.append(sentence)
+            current = []
+    tail = "".join(current).strip()
+    if tail:
+        sentences.append(tail)
+    return sentences
+
+
+def _ai_reason(row):
+    text = _first_text(row, "ai_reason", "reasoning", "reason", "explanation", "analysis")
+    sentences = _split_sentences(text)
+    if sentences:
+        return " ".join(sentences[:2])
+    return text
+
+
+def _ai_analysis_text(row):
+    text = _first_text(
+        row,
+        "ai_analysis_text",
+        "ai_reason",
+        "reasoning",
+        "reason",
+        "explanation",
+        "analysis",
+    )
+    return text or AI_ANALYSIS_UNAVAILABLE
+
+
 def _normalise(row, paper_trade_lookup=None):
     atr_pips = row.get("atr_pips")
     paper_trade = None
@@ -122,7 +164,8 @@ def _normalise(row, paper_trade_lookup=None):
         "dangerous_event_reason": row.get("dangerous_event_reason") or "",
         "ai_score": _coerce_float(row.get("ai_score")),
         "ai_confidence_score": _coerce_float(row.get("ai_confidence_score")),
-        "ai_reason": _first_text(row, "ai_reason", "reasoning", "reason", "explanation", "analysis"),
+        "ai_analysis_text": _ai_analysis_text(row),
+        "ai_reason": _ai_reason(row),
         "ai_features_snapshot": _parse_features_snapshot(row.get("ai_features_snapshot")),
         "ai_model_version": _model_version(row),
         "technical_score": _coerce_float(row.get("technical_score")),
@@ -239,8 +282,17 @@ def _read_from_sqlite(limit):
         conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         try:
+            cols = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(decisions)").fetchall()
+            }
+            ai_analysis_select = (
+                "ai_analysis_text"
+                if "ai_analysis_text" in cols
+                else "NULL AS ai_analysis_text"
+            )
             rows = conn.execute(
-                """
+                f"""
                 SELECT timestamp, pair, timeframe, ai_signal, technical_signal,
                        shadow_technical_signal, shadow_combined_signal,
                        shadow_combined_confidence, shadow_combined_reason,
@@ -249,7 +301,7 @@ def _read_from_sqlite(limit):
                        trade_allowed, block_reason, blocking_reason,
                        current_price, atr_pips, atr_price,
                        dangerous_event_nearby, dangerous_event_reason,
-                       ai_score, ai_confidence_score, ai_reason,
+                       ai_score, ai_confidence_score, {ai_analysis_select}, ai_reason,
                        ai_features_snapshot, ai_model_version,
                        technical_score, technical_reason, shadow_score,
                        shadow_technical_reason, shadow_technical_confidence,

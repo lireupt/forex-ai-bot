@@ -205,6 +205,7 @@ def _ensure_decisions_columns(conn):
         "sl_tp_mode": "TEXT",
         "ai_score": "REAL",
         "ai_confidence_score": "REAL",
+        "ai_analysis_text": "TEXT",
         "ai_reason": "TEXT",
         "ai_features_snapshot": "TEXT",
         "ai_model_version": "TEXT",
@@ -491,11 +492,11 @@ def save_decision(conn, entry):
          current_price, trade_allowed, block_reason, dangerous_event_nearby,
          dangerous_event_reason, simulated_order_json, decision_signature,
          stop_loss_pips_used, take_profit_pips_used, sl_tp_mode,
-         ai_score, ai_confidence_score, ai_reason, ai_features_snapshot,
+         ai_score, ai_confidence_score, ai_analysis_text, ai_reason, ai_features_snapshot,
          ai_model_version, technical_score, shadow_score, combined_score,
          combined_reason, blocking_reason, score_combined_signal,
          gating_mode, gating_signal, gating_confidence, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             entry["timestamp"],
@@ -543,6 +544,7 @@ def save_decision(conn, entry):
             entry.get("sl_tp_mode"),
             entry.get("ai_score"),
             entry.get("ai_confidence_score"),
+            entry.get("ai_analysis_text"),
             entry.get("ai_reason"),
             features_snapshot_json,
             entry.get("ai_model_version"),

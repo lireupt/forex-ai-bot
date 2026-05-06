@@ -52,6 +52,7 @@ def _make_decision_entry(**overrides):
         "sl_tp_mode": None,
         "ai_score": 0.6,
         "ai_confidence_score": 0.6,
+        "ai_analysis_text": "Full AI market assessment with fundamentals and technical context.",
         "ai_reason": "AI thinks BUY",
         "ai_features_snapshot": {"close": 1.1756, "rsi": 58.2},
         "ai_model_version": "groq:llama-3.3-70b-versatile",
@@ -94,8 +95,9 @@ class TestSchema:
         cols = {row["name"] for row in memory_db.execute("PRAGMA table_info(decisions)").fetchall()}
         # As novas colunas têm de estar presentes
         for col in [
-            "ai_score", "ai_confidence_score", "ai_reason", "ai_features_snapshot",
-            "ai_model_version", "technical_score", "shadow_score", "combined_score",
+            "ai_score", "ai_confidence_score", "ai_analysis_text", "ai_reason",
+            "ai_features_snapshot", "ai_model_version", "technical_score",
+            "shadow_score", "combined_score",
             "combined_reason", "blocking_reason", "score_combined_signal", "paper_trade_id",
         ]:
             assert col in cols, f"coluna {col} em falta"
@@ -141,6 +143,7 @@ class TestSaveDecision:
             "SELECT * FROM decisions WHERE id = ?", (decision_id,)
         ).fetchone()
         assert row["ai_score"] == 0.6
+        assert row["ai_analysis_text"] == "Full AI market assessment with fundamentals and technical context."
         assert row["ai_model_version"] == "groq:llama-3.3-70b-versatile"
         assert row["combined_score"] == 0.36
         assert row["score_combined_signal"] == "BUY"

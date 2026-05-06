@@ -257,6 +257,13 @@
       color: var(--text);
       margin: 0;
     }
+    .ai-analysis-text {
+      white-space: pre-wrap;
+      line-height: 1.55;
+      color: var(--text);
+      font-size: 13px;
+      margin: 0;
+    }
 
     .score-bar {
       display: inline-block;
@@ -770,6 +777,8 @@
       function openDecisionModal(d) {
         if (!d) return;
         const features = d.ai_features_snapshot || {};
+        const aiAnalysisText = d.ai_analysis_text || d.ai_reason || "Análise IA não disponível para esta decisão.";
+        const aiConfidence = features.ai_confidence ?? d.confidence ?? 0;
         const featuresEntries = Object.entries(features).filter(([k]) => k !== "recent_candles");
         const featuresHtml = featuresEntries.length
           ? `<div class="features-grid">${featuresEntries.map(([k, v]) => {
@@ -807,11 +816,17 @@
 
         const html = `
           <section class="modal-section">
+            <h4>Análise da IA</h4>
+            <p class="ai-analysis-text">${escapeHtml(aiAnalysisText)}</p>
+          </section>
+
+          <section class="modal-section">
             <h4>Decisão IA</h4>
             ${buildKv([
               ["Sinal IA", `${pill(d.ai_signal)} ${scoreBar(d.ai_score)}`],
-              ["Confiança IA", `${d.confidence ?? 0}% (score ${fmtScore(d.ai_confidence_score)})`],
-              ["Razão IA", escapeHtml(d.ai_reason)],
+              ["Score IA", fmtScore(d.ai_score)],
+              ["Confiança IA", `${aiConfidence}% (score ${fmtScore(d.ai_confidence_score)})`],
+              ["Resumo IA", escapeHtml(d.ai_reason)],
               ["Modelo", escapeHtml(d.ai_model_version)],
             ])}
           </section>
