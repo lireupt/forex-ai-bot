@@ -4,7 +4,7 @@
 - Aplica whitelist de campos (não expõe API keys, .env, raw logs ou DB completa).
 - Inclui scores, explicações estruturadas e estado de paper-trades por decisão.
 - Idempotente e fail-safe: nunca levanta excepções para fora.
-
+- para adiconar
 Uso:
     python scripts/export_logs.py
     python scripts/export_logs.py --limit 100 --out web/data.json
