@@ -51,7 +51,7 @@ def load_risk_config():
         "atr_min_sl_pips": _env_float("ATR_MIN_SL_PIPS", DEFAULT_ATR_MIN_SL_PIPS),
         "atr_max_sl_pips": _env_float("ATR_MAX_SL_PIPS", DEFAULT_ATR_MAX_SL_PIPS),
         "allow_buy": _env_bool("ALLOW_BUY", True),
-        "allow_sell": _env_bool("ALLOW_SELL", False),
+        "allow_sell": _env_bool("ALLOW_SELL", True),
         "atr_filter_enabled": _env_bool("ATR_FILTER_ENABLED", True),
         "min_atr_pips": _env_float("MIN_ATR_PIPS", DEFAULT_MIN_ATR_PIPS),
         "momentum_filter_enabled": _env_bool("MOMENTUM_FILTER_ENABLED", True),
