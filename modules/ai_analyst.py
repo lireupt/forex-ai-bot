@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 from dotenv import load_dotenv
 
@@ -128,6 +129,13 @@ def _fallback(provider, error_msg):
     }
 
 
+def _failed(provider, error_msg):
+    result = _fallback(provider, error_msg)
+    result["status"] = "failed"
+    result["error"] = error_msg
+    return result
+
+
 def _strip_json_fences(text):
     text = text.strip()
     if text.startswith("```"):
@@ -190,28 +198,39 @@ def _analyse_claude(user_message):
 def analyse(news, events, pair="EUR/USD", technical=None):
     provider = (os.getenv("AI_PROVIDER") or "groq").strip().lower()
     user_message = _build_user_message(news, events, pair, technical=technical)
+    max_retries = int(float(os.getenv("AI_MAX_RETRIES") or 3))
+    backoff_seconds = float(os.getenv("AI_RETRY_BACKOFF_SECONDS") or 5)
 
-    try:
-        if provider == "groq":
-            raw = _analyse_groq(user_message)
-        elif provider == "claude":
-            raw = _analyse_claude(user_message)
-        else:
-            return _fallback(
-                provider,
-                f"AI_PROVIDER='{provider}' inválido (usa 'groq' ou 'claude')",
-            )
+    if provider not in {"groq", "claude"}:
+        return _failed(
+            provider,
+            f"AI_PROVIDER='{provider}' inválido (usa 'groq' ou 'claude')",
+        )
 
-        result = json.loads(_strip_json_fences(raw))
-        _validate(result)
-        result["provider"] = provider
-        result["model_version"] = model_version_for_provider(provider)
-        return result
+    attempts = max(1, max_retries)
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            if provider == "groq":
+                raw = _analyse_groq(user_message)
+            else:
+                raw = _analyse_claude(user_message)
 
-    except json.JSONDecodeError as e:
-        return _fallback(provider, f"resposta não é JSON válido ({e})")
-    except Exception as e:
-        return _fallback(provider, f"{type(e).__name__}: {e}")
+            result = json.loads(_strip_json_fences(raw))
+            _validate(result)
+            result["provider"] = provider
+            result["model_version"] = model_version_for_provider(provider)
+            result["status"] = "ok"
+            return result
+
+        except json.JSONDecodeError as e:
+            return _failed(provider, f"resposta não é JSON válido ({e})")
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {e}"
+            if attempt < attempts:
+                time.sleep(backoff_seconds * attempt)
+
+    return _failed(provider, last_error or "falha desconhecida")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import pandas_ta as ta
 
@@ -24,11 +26,19 @@ def _neutral_result():
             "macd_signal": "neutral",
             "macd_signal_value": None,
             "macd_vote": "neutral",
+            "macd_minus_signal": None,
+            "adx": None,
+            "adx14": None,
+            "adx_vote": "neutral",
             "atr14": None,
             "atr_price": None,
             "atr_pips": None,
             "volatility_reason": "ATR indisponível.",
             "current_price": None,
+            "ema20_minus_ema50": None,
+            "technical_score": 0.0,
+            "technical_signal": "NEUTRAL",
+            "technical_score_reasons": [],
         },
     }
 
@@ -37,6 +47,54 @@ def _round_or_none(value, digits=4):
     if pd.isna(value):
         return None
     return round(float(value), digits)
+
+
+def _env_float(name, default):
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _env_str(name, default):
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip()
+
+
+def _vote_value(vote):
+    return {"bullish": 1.0, "bearish": -1.0}.get(vote, 0.0)
+
+
+def _technical_score(rsi_vote, ema_vote, macd_vote):
+    weights = {
+        "rsi": _env_float("RSI_WEIGHT", 0.30),
+        "ema": _env_float("EMA_WEIGHT", 0.40),
+        "macd": _env_float("MACD_WEIGHT", 0.30),
+    }
+    total_weight = sum(abs(v) for v in weights.values())
+    if total_weight == 0:
+        return 0.0, weights
+    score = (
+        _vote_value(rsi_vote) * weights["rsi"]
+        + _vote_value(ema_vote) * weights["ema"]
+        + _vote_value(macd_vote) * weights["macd"]
+    ) / total_weight
+    return max(-1.0, min(1.0, score)), weights
+
+
+def _score_signal(score):
+    buy_threshold = _env_float("TECHNICAL_BUY_THRESHOLD", 0.35)
+    sell_threshold = _env_float("TECHNICAL_SELL_THRESHOLD", -0.35)
+    if score >= buy_threshold:
+        return "BUY"
+    if score <= sell_threshold:
+        return "SELL"
+    return "NEUTRAL"
 
 
 def _shadow_signal(votes):
@@ -78,6 +136,9 @@ def analyse(candles_df, pair="EUR/USD"):
         df["EMA_20"] = ta.ema(df["close"], length=20)
         df["EMA_50"] = ta.ema(df["close"], length=50)
         df["ATR_14"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+        adx = ta.adx(df["high"], df["low"], df["close"], length=14)
+        if adx is not None and not adx.empty:
+            df = pd.concat([df, adx], axis=1)
 
         macd = ta.macd(df["close"], fast=12, slow=26, signal=9)
         if macd is not None and not macd.empty:
@@ -91,6 +152,8 @@ def analyse(candles_df, pair="EUR/USD"):
             "MACD_12_26_9",
             "MACDs_12_26_9",
         ]
+        if "ADX_14" in df.columns:
+            required.append("ADX_14")
         usable = df.dropna(subset=required)
         if usable.empty:
             return _neutral_result()
@@ -101,6 +164,7 @@ def analyse(candles_df, pair="EUR/USD"):
         ema50 = float(last["EMA_50"])
         macd_value = float(last["MACD_12_26_9"])
         macd_signal_value = float(last["MACDs_12_26_9"])
+        adx14 = float(last["ADX_14"]) if "ADX_14" in usable.columns else None
         atr14 = float(last["ATR_14"])
         atr_pips = atr14 / PIP_SIZE
         current_price = float(last["close"])
@@ -112,27 +176,43 @@ def analyse(candles_df, pair="EUR/USD"):
         else:
             rsi_signal = "neutral"
 
-        ema_trend = "bullish" if ema20 > ema50 else "bearish"
-        macd_signal = "bullish" if macd_value > macd_signal_value else "bearish"
+        ema_delta = ema20 - ema50
+        macd_delta = macd_value - macd_signal_value
+        ema_trend = "bullish" if ema_delta > 0 else "bearish"
+        macd_signal = "bullish" if macd_delta > 0 else "bearish"
+        adx_vote = "trend" if adx14 is not None and adx14 >= _env_float("MIN_ADX", 20.0) else "weak"
 
         votes = [rsi_signal, ema_trend, macd_signal]
         bullish_votes = votes.count("bullish")
         bearish_votes = votes.count("bearish")
         neutral_votes = votes.count("neutral")
 
-        if bullish_votes == 3:
-            signal = "BUY"
-        elif bearish_votes == 3:
-            signal = "SELL"
+        score, weights = _technical_score(rsi_signal, ema_trend, macd_signal)
+        mode = _env_str("TECHNICAL_SIGNAL_MODE", "score").lower()
+        if mode == "strict":
+            if bullish_votes == 3:
+                signal = "BUY"
+            elif bearish_votes == 3:
+                signal = "SELL"
+            else:
+                signal = "NEUTRAL"
         else:
-            signal = "NEUTRAL"
+            signal = _score_signal(score)
 
         majority_votes = max(bullish_votes, bearish_votes, neutral_votes)
         confidence = round((majority_votes / 3) * 100)
         shadow_signal, shadow_confidence, shadow_reason = _shadow_signal(votes)
+        reasons = [
+            f"RSI={rsi_signal}",
+            f"EMA={ema_trend}",
+            f"MACD={macd_signal}",
+            f"score={score:+.2f}",
+        ]
         technical_reason = (
             f"RSI {rsi_signal}; EMA {ema_trend}; MACD {macd_signal}. "
-            f"BUY/SELL exige 3 votos alinhados, por isso o sinal técnico é {signal}."
+            f"Score técnico ponderado={score:+.2f} "
+            f"(RSI={weights['rsi']:.2f}, EMA={weights['ema']:.2f}, MACD={weights['macd']:.2f}); "
+            f"sinal técnico é {signal}."
         )
 
         return {
@@ -154,11 +234,19 @@ def analyse(candles_df, pair="EUR/USD"):
                 "macd_signal": macd_signal,
                 "macd_signal_value": _round_or_none(macd_signal_value, 4),
                 "macd_vote": macd_signal,
+                "macd_minus_signal": _round_or_none(macd_delta, 5),
+                "adx": _round_or_none(adx14, 1),
+                "adx14": _round_or_none(adx14, 1),
+                "adx_vote": adx_vote,
                 "atr14": _round_or_none(atr14, 4),
                 "atr_price": _round_or_none(atr14, 4),
                 "atr_pips": _round_or_none(atr_pips, 1),
                 "volatility_reason": _atr_reason(_round_or_none(atr_pips, 1)),
                 "current_price": _round_or_none(current_price, 4),
+                "ema20_minus_ema50": _round_or_none(ema_delta, 5),
+                "technical_score": _round_or_none(score, 4),
+                "technical_signal": signal,
+                "technical_score_reasons": reasons,
             },
         }
 

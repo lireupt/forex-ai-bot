@@ -793,6 +793,12 @@
           ? `<pre class="candles">${escapeHtml(JSON.stringify(features.recent_candles, null, 2))}</pre>`
           : "";
 
+        const gates = d.gate_diagnostics || {};
+        const gateContext = gates.context || {};
+        const gateConfig = gates.config || {};
+        const marketGate = gateContext.market || {};
+        const cooldownGate = gateContext.cooldown || {};
+        const eventGate = gateContext.event || {};
         const paper = d.paper_trade;
         const paperSection = paper
           ? `<section class="modal-section">
@@ -843,6 +849,7 @@
               ["RSI", `${fmtNumber(d.rsi_value, 1)} (${escapeHtml(d.rsi_vote)})`],
               ["EMA", `EMA20=${fmtNumber(d.ema20_value, 5)} / EMA50=${fmtNumber(d.ema50_value, 5)} (${escapeHtml(d.ema_vote)})`],
               ["MACD", `MACD=${fmtNumber(d.macd_value, 5)} / signal=${fmtNumber(d.macd_signal_value, 5)} (${escapeHtml(d.macd_vote)})`],
+              ["ADX", d.adx_value != null ? fmtNumber(d.adx_value, 1) : "—"],
               ["Razão técnica", escapeHtml(d.technical_reason)],
             ])}
           </section>
@@ -872,6 +879,26 @@
               ["Preço", fmtNumber(d.current_price, 5)],
               ["Timestamp", fmtTime(d.timestamp)],
               ["Evento próximo", d.dangerous_event_nearby ? `<span class="pill event">evento</span> ${escapeHtml(d.dangerous_event_reason || "")}` : "não"],
+            ])}
+          </section>
+
+          <section class="modal-section">
+            <h4>Gate Diagnostics</h4>
+            ${buildKv([
+              ["Mercado", marketGate.is_open === false ? `<span class="pill blocked">fechado</span> ${escapeHtml(marketGate.gate || "")}` : '<span class="pill allowed">aberto</span>'],
+              ["BUY permitido", gateConfig.allow_buy === false ? "não" : "sim"],
+              ["SELL permitido", gateConfig.allow_sell === false ? "não" : "sim"],
+              ["ATR", d.atr_pips != null ? `${fmtNumber(d.atr_pips, 1)} pips / min ${fmtNumber(gateConfig.min_atr_pips, 1)}` : "—"],
+              ["ADX", d.adx_value != null ? `${fmtNumber(d.adx_value, 1)} / min ${fmtNumber(gateConfig.min_adx, 1)}` : "—"],
+              ["RSI", `${fmtNumber(d.rsi_value, 1)} / BUY min ${fmtNumber(gateConfig.buy_min_rsi, 1)} / SELL max ${fmtNumber(gateConfig.sell_max_rsi, 1)}`],
+              ["EMA direction", d.ema20_value > d.ema50_value ? "EMA20 > EMA50" : "EMA20 < EMA50"],
+              ["Cooldown", cooldownGate.cooldown_active || cooldownGate.max_direction_signals_reached ? `<span class="pill blocked">${escapeHtml(cooldownGate.reason || "ativo")}</span>` : "inativo"],
+              ["Evento bloqueante", eventGate.dangerous_event_nearby ? escapeHtml(eventGate.dangerous_event_reason || "high_impact_event_nearby") : "não"],
+              ["AI status", escapeHtml(d.ai_status || "ok")],
+              ["Technical score", fmtScore(d.technical_score)],
+              ["Combined score", fmtScore(d.combined_score)],
+              ["Motivo bloqueio", escapeHtml(d.blocking_reason || d.block_reason || "")],
+              ["Motivo NEUTRAL", escapeHtml(d.neutral_reason || "")],
             ])}
           </section>
 

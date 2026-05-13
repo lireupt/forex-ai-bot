@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -7,6 +8,27 @@ from pathlib import Path
 PIP_SIZE = 0.0001
 
 DB_PATH = Path("data/forex_bot.db")
+
+HIGH_IMPACT_EVENT_WHITELIST = (
+    "CPI",
+    "Core CPI",
+    "PCE",
+    "Core PCE",
+    "Nonfarm Payrolls",
+    "NFP",
+    "Unemployment Rate",
+    "GDP",
+    "Retail Sales",
+    "PMI",
+    "ISM",
+    "FOMC",
+    "Fed Rate Decision",
+    "ECB Rate Decision",
+    "ECB Press Conference",
+    "Interest Rate Decision",
+    "Powell Speech",
+    "Lagarde Speech",
+)
 
 
 def utc_now():
@@ -219,6 +241,10 @@ def _ensure_decisions_columns(conn):
         "gating_mode": "TEXT",
         "gating_signal": "TEXT",
         "gating_confidence": "INTEGER",
+        "adx_value": "REAL",
+        "gate_diagnostics_json": "TEXT",
+        "ai_status": "TEXT",
+        "neutral_reason": "TEXT",
     }
     for name, column_type in columns.items():
         if name not in existing:
@@ -349,7 +375,27 @@ def _parse_event_time(value):
     return parsed.astimezone(timezone.utc)
 
 
+def _env_bool(name, default):
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _event_is_whitelisted(title):
+    title_upper = (title or "").upper()
+    return any(item.upper() in title_upper for item in HIGH_IMPACT_EVENT_WHITELIST)
+
+
 def find_high_impact_event_nearby(conn, window_minutes, relevant_currencies=None):
+    if not _env_bool("EVENT_FILTER_ENABLED", True):
+        return {
+            "dangerous_event_nearby": False,
+            "dangerous_event_reason": "",
+            "event_gate_reason": "event_filter_disabled",
+            "ignored_events": [],
+        }
+
     now = datetime.now(timezone.utc)
     rows = conn.execute(
         """
@@ -364,6 +410,7 @@ def find_high_impact_event_nearby(conn, window_minutes, relevant_currencies=None
     if relevant_currencies:
         relevant = {c.strip().upper() for c in relevant_currencies if c}
 
+    ignored = []
     for row in rows:
         event_time = _parse_event_time(row["event_time"])
         if event_time is None:
@@ -373,8 +420,24 @@ def find_high_impact_event_nearby(conn, window_minutes, relevant_currencies=None
         if minutes > window_minutes:
             continue
 
+        title = row["title"] or ""
+        if not _event_is_whitelisted(title):
+            ignored.append({
+                "reason": "event_ignored_not_whitelisted",
+                "currency": row["country"],
+                "title": title,
+                "time": row["event_time"],
+            })
+            continue
+
         currency = (row["country"] or "").strip().upper()
         if relevant is not None and currency and currency not in relevant:
+            ignored.append({
+                "reason": "event_ignored_wrong_currency",
+                "currency": row["country"],
+                "title": title,
+                "time": row["event_time"],
+            })
             continue
 
         direction = "daqui a" if event_time >= now else "há"
@@ -384,11 +447,22 @@ def find_high_impact_event_nearby(conn, window_minutes, relevant_currencies=None
                 f"evento high impact {direction} {round(minutes)} min: "
                 f"{row['country']} {row['title']}"
             ),
+            "event_gate_reason": "high_impact_event_nearby",
+            "event": {
+                "currency": row["country"],
+                "title": title,
+                "time": row["event_time"],
+                "source": row["source"],
+                "minutes": round(minutes),
+            },
+            "ignored_events": ignored[-10:],
         }
 
     return {
         "dangerous_event_nearby": False,
         "dangerous_event_reason": "",
+        "event_gate_reason": "",
+        "ignored_events": ignored[-10:],
     }
 
 
@@ -450,6 +524,8 @@ def get_ai_analysis(conn, pair, analysis_date, input_hash, provider):
 
 
 def save_ai_analysis(conn, pair, analysis_date, input_hash, result):
+    if result.get("status") == "failed":
+        return
     conn.execute(
         """
         INSERT OR IGNORE INTO ai_analyses
@@ -479,6 +555,12 @@ def save_decision(conn, entry):
     else:
         features_snapshot_json = features_snapshot
 
+    gate_diagnostics = entry.get("gate_diagnostics")
+    if isinstance(gate_diagnostics, (dict, list)):
+        gate_diagnostics_json = json.dumps(gate_diagnostics, ensure_ascii=False)
+    else:
+        gate_diagnostics_json = gate_diagnostics
+
     cursor = conn.execute(
         """
         INSERT INTO decisions
@@ -495,8 +577,9 @@ def save_decision(conn, entry):
          ai_score, ai_confidence_score, ai_analysis_text, ai_reason, ai_features_snapshot,
          ai_model_version, technical_score, shadow_score, combined_score,
          combined_reason, blocking_reason, score_combined_signal,
-         gating_mode, gating_signal, gating_confidence, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         gating_mode, gating_signal, gating_confidence, adx_value,
+         gate_diagnostics_json, ai_status, neutral_reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             entry["timestamp"],
@@ -557,11 +640,47 @@ def save_decision(conn, entry):
             entry.get("gating_mode"),
             entry.get("gating_signal"),
             entry.get("gating_confidence"),
+            entry.get("adx_value"),
+            gate_diagnostics_json,
+            entry.get("ai_status"),
+            entry.get("neutral_reason"),
             utc_now(),
         ),
     )
     conn.commit()
     return cursor.lastrowid
+
+
+def get_recent_paper_trades_for_direction(conn, pair, source, direction, since_iso):
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM paper_trades
+        WHERE pair = ? AND source = ? AND direction = ? AND created_at >= ?
+        ORDER BY created_at DESC
+        """,
+        (pair, source, direction, since_iso),
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def get_last_closed_paper_trade(conn, pair, source=None):
+    clauses = ["pair = ?", "status in ('win', 'loss')", "closed_at IS NOT NULL"]
+    params = [pair]
+    if source:
+        clauses.append("source = ?")
+        params.append(source)
+    row = conn.execute(
+        f"""
+        SELECT *
+        FROM paper_trades
+        WHERE {' AND '.join(clauses)}
+        ORDER BY closed_at DESC
+        LIMIT 1
+        """,
+        tuple(params),
+    ).fetchone()
+    return dict(row) if row is not None else None
 
 
 def link_decision_to_paper_trade(conn, decision_id, paper_trade_id):

@@ -23,7 +23,7 @@ from collections import defaultdict
 import pandas as pd
 import yfinance as yf
 
-from modules import scoring
+from modules import database, scoring
 from modules.technical import analyse as analyse_technical
 
 PIP_SIZE = 0.0001
@@ -61,6 +61,26 @@ def _normalise_columns(df):
 
 
 def fetch_history(pair, timeframe, period):
+    conn = database.connect()
+    try:
+        database.init_db(conn)
+        rows = conn.execute(
+            """
+            SELECT candle_time, open, high, low, close, volume
+            FROM market_candles
+            WHERE pair = ? AND timeframe = ?
+            ORDER BY candle_time ASC
+            """,
+            (pair, timeframe),
+        ).fetchall()
+        if rows:
+            df = pd.DataFrame([dict(row) for row in rows])
+            df["candle_time"] = pd.to_datetime(df["candle_time"])
+            df = df.set_index("candle_time")
+            return df[["open", "high", "low", "close", "volume"]]
+    finally:
+        conn.close()
+
     ticker = _pair_to_yahoo_ticker(pair)
     df = yf.download(
         ticker,
@@ -98,11 +118,13 @@ def _score_signal_for_window(result, scoring_config):
     (neutral) e a técnica avaliada na window. Reflete o que o threshold
     produziria se a IA não inclinasse o resultado."""
     indicators = result.get("indicators", {})
-    technical_score = scoring.technical_votes_score(
-        indicators.get("rsi_vote", indicators.get("rsi_signal", "neutral")),
-        indicators.get("ema_vote", indicators.get("ema_trend", "neutral")),
-        indicators.get("macd_vote", indicators.get("macd_signal", "neutral")),
-    )
+    technical_score = indicators.get("technical_score")
+    if technical_score is None:
+        technical_score = scoring.technical_votes_score(
+            indicators.get("rsi_vote", indicators.get("rsi_signal", "neutral")),
+            indicators.get("ema_vote", indicators.get("ema_trend", "neutral")),
+            indicators.get("macd_vote", indicators.get("macd_signal", "neutral")),
+        )
     shadow_score = scoring.signal_score(
         result.get("shadow_technical_signal"),
         result.get("shadow_technical_confidence"),
@@ -111,6 +133,7 @@ def _score_signal_for_window(result, scoring_config):
         ai_score=0.0,
         technical_score=technical_score,
         shadow_score=shadow_score,
+        news_score=0.0,
         config=scoring_config,
     )
     return scoring.score_to_signal(combined_score, scoring_config), combined_score
@@ -129,9 +152,15 @@ def run_backtest(pair, timeframe, period):
 
     horizons = _bars_per_horizon(timeframe)
     max_horizon_bars = max(horizons.values())
-    scoring_config = scoring.load_scoring_config()
+    scoring_config = scoring.load_combined_scoring_config()
+    combined_backtest_config = dict(scoring_config)
+    combined_backtest_config.update({"ai_weight": 0.0, "technical_weight": 1.0, "news_weight": 0.0})
 
-    signals = {"strict": [], "shadow": [], "score": []}
+    signals = {"combined": [], "ai_only": [], "shadow_combined": []}
+    counts = {
+        key: {"BUY": 0, "SELL": 0, "NEUTRAL": 0}
+        for key in signals
+    }
 
     for i in range(WARMUP_BARS, total_bars - max_horizon_bars):
         window = df.iloc[: i + 1]
@@ -141,15 +170,20 @@ def run_backtest(pair, timeframe, period):
         if entry is None:
             continue
 
-        score_signal, _ = _score_signal_for_window(result, scoring_config)
+        score_signal, _ = _score_signal_for_window(result, combined_backtest_config)
+        ai_only_signal = "NEUTRAL"
+        shadow_signal = result.get("shadow_technical_signal") or "NEUTRAL"
 
         triplets = (
-            ("strict", result.get("signal")),
-            ("shadow", result.get("shadow_technical_signal")),
-            ("score", score_signal),
+            ("combined", score_signal),
+            ("ai_only", ai_only_signal),
+            ("shadow_combined", shadow_signal),
         )
 
         for source_key, signal in triplets:
+            if signal not in ("BUY", "SELL", "NEUTRAL"):
+                signal = "NEUTRAL"
+            counts[source_key][signal] += 1
             if signal not in ("BUY", "SELL"):
                 continue
             outcomes = {}
@@ -167,7 +201,7 @@ def run_backtest(pair, timeframe, period):
                 "outcomes": outcomes,
             })
 
-    _print_summary(pair, timeframe, period, total_bars, signals, scoring_config)
+    _print_summary(pair, timeframe, period, total_bars, signals, counts, scoring_config)
 
 
 def _summarise(entries, horizon):
@@ -184,25 +218,61 @@ def _summarise(entries, horizon):
         "win_rate": round(wins / len(pips) * 100, 1),
         "avg_pips": round(avg, 1),
         "total_pips": round(sum(pips), 1),
+        "profit_factor": _profit_factor(pips),
+        "avg_r": round(avg / 10.0, 2),
+        "drawdown": _drawdown(pips),
+        "max_loss_streak": _max_loss_streak(pips),
     }
 
 
-def _print_summary(pair, timeframe, period, total_bars, signals, scoring_config):
+def _profit_factor(pips):
+    wins = [p for p in pips if p > 0]
+    losses = [-p for p in pips if p < 0]
+    if not losses:
+        return 999.0 if wins else None
+    return round(sum(wins) / sum(losses), 2)
+
+
+def _drawdown(pips):
+    equity = peak = 0.0
+    max_dd = 0.0
+    for p in pips:
+        equity += p
+        peak = max(peak, equity)
+        max_dd = max(max_dd, peak - equity)
+    return round(max_dd, 1)
+
+
+def _max_loss_streak(pips):
+    current = 0
+    max_streak = 0
+    for p in pips:
+        if p < 0:
+            current += 1
+            max_streak = max(max_streak, current)
+        elif p > 0:
+            current = 0
+    return max_streak
+
+
+def _print_summary(pair, timeframe, period, total_bars, signals, counts, scoring_config):
     print()
     print(f"=== Backtest {pair} {timeframe} ({period}) ===")
     print(f"Candles analisadas: {total_bars}")
     print(f"Bar warmup: {WARMUP_BARS}")
     print(
-        f"Score thresholds: BUY>={scoring_config['buy_threshold']:+.2f} "
+        f"Combined thresholds: BUY>={scoring_config['buy_threshold']:+.2f} "
         f"SELL<={scoring_config['sell_threshold']:+.2f} "
-        f"(pesos AI={scoring_config['ai_weight']:.2f} tech={scoring_config['technical_weight']:.2f})"
+        f"(pesos AI={scoring_config['ai_weight']:.2f} "
+        f"tech={scoring_config['technical_weight']:.2f} news={scoring_config.get('news_weight', 0):.2f})"
     )
+    print("Backtest combined: sem histórico de IA, usa técnica com peso 1.0 para gerar sinais sintéticos.")
     print()
 
     label_map = (
-        ("strict", "Estrito (3/3)"),
-        ("shadow", "Shadow (2/3)"),
-        ("score", "Score-based (AI=0, técnica)"),
+        ("combined", "combined (estratégia principal, AI histórico=0)"),
+        ("ai_only", "ai_only (não valida estratégia principal)"),
+        ("shadow_combined", "shadow_combined (observação estatística)"),
     )
     for source_key, label in label_map:
         entries = signals.get(source_key, [])
@@ -217,7 +287,11 @@ def _print_summary(pair, timeframe, period, total_bars, signals, scoring_config)
             print()
             continue
 
-        print(f"  Sinais totais: {total}  (BUY={len(by_signal['BUY'])}, SELL={len(by_signal['SELL'])})")
+        c = counts[source_key]
+        print(
+            f"  Sinais: BUY={c['BUY']} SELL={c['SELL']} NEUTRAL={c['NEUTRAL']}  "
+            f"trades simulados={total}"
+        )
         for horizon in ("1h", "4h", "24h"):
             stats = _summarise(entries, horizon)
             if stats is None:
@@ -226,7 +300,9 @@ def _print_summary(pair, timeframe, period, total_bars, signals, scoring_config)
                 f"  {horizon}: "
                 f"{stats['wins']} W / {stats['losses']} L / {stats['count']} total "
                 f"({stats['win_rate']}%) "
-                f"avg={stats['avg_pips']} pips, total={stats['total_pips']} pips"
+                f"avg={stats['avg_pips']} pips, total={stats['total_pips']} pips, "
+                f"PF={stats['profit_factor']} AvgR={stats['avg_r']} "
+                f"DD={stats['drawdown']} maxLossStreak={stats['max_loss_streak']}"
             )
         print()
 
@@ -234,8 +310,10 @@ def _print_summary(pair, timeframe, period, total_bars, signals, scoring_config)
 def parse_args():
     parser = argparse.ArgumentParser(description="Backtest do sinal técnico estrito e shadow.")
     parser.add_argument("--pair", default="EUR/USD")
+    parser.add_argument("--symbol", dest="pair")
     parser.add_argument("--tf", dest="timeframe", default="1h",
                         help="timeframe yfinance (ex: 1h, 30m, 15m, 1d)")
+    parser.add_argument("--timeframe", dest="timeframe")
     parser.add_argument("--period", default="60d",
                         help="período yfinance (ex: 7d, 60d, 6mo, 1y, 2y)")
     return parser.parse_args()
@@ -243,6 +321,8 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if not args.pair:
+        args.pair = "EUR/USD"
     try:
         run_backtest(args.pair, args.timeframe, args.period)
     except KeyboardInterrupt:

@@ -14,6 +14,7 @@ from modules.ai_analyst import (
     model_version_for_provider,
 )
 from modules import database
+from modules.market import forex_market_state, is_forex_market_open
 from modules.news_scraper import fetch_all_events, fetch_all_news
 from modules.price_feed import PROVIDER as PRICE_PROVIDER, fetch_candles
 from modules.risk import evaluate_trade
@@ -272,39 +273,77 @@ def _get_ai_result(conn, cache_config, provider, news, events, technical=None):
             return cached, input_hash, "cache"
 
     result = analyse_ai(news, events, PAIR, technical=technical)
-    database.save_ai_analysis(conn, PAIR, today, input_hash, result)
+    if result.get("status") != "failed":
+        database.save_ai_analysis(conn, PAIR, today, input_hash, result)
     return result, input_hash, "fresh"
 
 
-def _combine_signals(ai_result, technical_result):
+def _neutral_reason(ai_score, technical_score, combined_score, ai_signal, technical_signal):
+    if ai_signal != "NEUTRAL" and technical_signal != "NEUTRAL" and ai_signal != technical_signal:
+        return "conflicting_signals"
+    if abs(combined_score or 0.0) < 0.20:
+        return "weak_signal"
+    return "combined_score_below_threshold"
+
+
+def _combine_signals(ai_result, technical_result, scoring_config=None, news_score=0.0):
     ai_signal = ai_result.get("signal", "NEUTRAL")
     technical_signal = technical_result.get("signal", "NEUTRAL")
     reasoning = ai_result.get("reasoning", "")
 
-    if ai_signal == "NEUTRAL" or technical_signal == "NEUTRAL":
+    if ai_result.get("status") == "failed":
         return {
             "signal": "NEUTRAL",
             "confidence": 0,
             "hold_off": True,
-            "reasoning": reasoning,
+            "reasoning": f"decision_skipped_ai_failed: {reasoning}",
             "agreement": False,
+            "combined_score": 0.0,
+            "components": {"ai_score": None, "technical_score": None, "news_score": news_score},
+            "neutral_reason": "decision_skipped_ai_failed",
         }
 
-    if ai_signal == technical_signal:
-        return {
-            "signal": ai_signal,
-            "confidence": round((ai_result.get("confidence", 0) + technical_result.get("confidence", 0)) / 2),
-            "hold_off": bool(ai_result.get("hold_off", False)),
-            "reasoning": reasoning,
-            "agreement": True,
-        }
+    scoring_config = scoring_config or scoring.load_scoring_config()
+    indicators = technical_result.get("indicators", {})
+    ai_score = scoring.signal_score(ai_signal, ai_result.get("confidence"))
+    technical_score = indicators.get("technical_score")
+    if technical_score is None:
+        technical_score = scoring.technical_votes_score(
+            indicators.get("rsi_vote", indicators.get("rsi_signal", "neutral")),
+            indicators.get("ema_vote", indicators.get("ema_trend", "neutral")),
+            indicators.get("macd_vote", indicators.get("macd_signal", "neutral")),
+        )
+    combined_score = scoring.combine_scores(
+        ai_score,
+        technical_score,
+        news_score=news_score,
+        config=scoring_config,
+    )
+    signal = scoring.score_to_signal(combined_score, scoring_config)
+    neutral_reason = ""
+    if signal == "NEUTRAL":
+        neutral_reason = _neutral_reason(
+            ai_score, technical_score, combined_score, ai_signal, technical_signal
+        )
 
     return {
-        "signal": "NEUTRAL",
-        "confidence": 0,
-        "hold_off": True,
-        "reasoning": f"{reasoning} [Discordância IA/técnica]",
-        "agreement": False,
+        "signal": signal,
+        "confidence": int(round(abs(combined_score) * 100)),
+        "hold_off": bool(ai_result.get("hold_off", False)),
+        "reasoning": reasoning,
+        "agreement": ai_signal == technical_signal and ai_signal in ("BUY", "SELL"),
+        "combined_score": combined_score,
+        "components": {
+            "ai_score": round(ai_score, 4),
+            "technical_score": round(float(technical_score or 0.0), 4),
+            "news_score": round(float(news_score or 0.0), 4),
+            "weights": {
+                "ai": scoring_config["ai_weight"],
+                "technical": scoring_config["technical_weight"],
+                "news": scoring_config.get("news_weight", 0.0),
+            },
+        },
+        "neutral_reason": neutral_reason,
     }
 
 
@@ -393,6 +432,7 @@ def _technical_details(technical_result):
         "ema50_value": ema50,
         "macd_value": macd,
         "macd_signal_value": macd_signal_value,
+        "adx_value": indicators.get("adx") if indicators.get("adx") is not None else indicators.get("adx14"),
         "atr14_value": indicators.get("atr14"),
         "atr_price": indicators.get("atr_price"),
         "atr_pips": indicators.get("atr_pips"),
@@ -474,6 +514,7 @@ def _build_features_snapshot(technical_result, candles_df, ai_result):
         "macd_minus_signal": None,
         "atr14": indicators.get("atr14"),
         "atr_pips": indicators.get("atr_pips"),
+        "adx": indicators.get("adx") if indicators.get("adx") is not None else indicators.get("adx14"),
         "volatility_level": _volatility_label(indicators.get("atr_pips")),
         "trend": indicators.get("ema_trend"),
         "momentum": indicators.get("macd_signal"),
@@ -626,12 +667,22 @@ def _build_combined_reason(ai_result, technical_result, combined, score_combined
         f"técnica={tech_signal} (score {technical_score:+.2f}); "
         f"score combinado={combined_score:+.2f} -> {score_combined_signal}."
     )
+    components = combined.get("components") or {}
+    weights = components.get("weights") or {}
+    if weights:
+        base += (
+            f" Pesos: AI={weights.get('ai', 0):.2f}, "
+            f"técnica={weights.get('technical', 0):.2f}, "
+            f"news={weights.get('news', 0):.2f}."
+        )
     if combined.get("agreement"):
         base += " Concordância IA/técnica."
+    elif combined.get("neutral_reason"):
+        base += f" NEUTRAL reason: {combined.get('neutral_reason')}."
     elif ai_signal == "NEUTRAL" or tech_signal == "NEUTRAL":
-        base += " Pelo menos um componente é NEUTRAL — regra estrita força NEUTRAL."
+        base += " Pelo menos um componente é NEUTRAL; regra estrita antiga ficaria NEUTRAL."
     elif ai_signal != tech_signal:
-        base += " Discordância IA vs técnica — regra estrita força NEUTRAL."
+        base += " Discordância IA vs técnica."
     return base
 
 
@@ -819,6 +870,7 @@ def _build_decision_entry(
         "atr14_value": details["atr14_value"],
         "atr_price": details["atr_price"],
         "atr_pips": details["atr_pips"],
+        "adx_value": details.get("adx_value"),
         "volatility_reason": details["volatility_reason"],
         "technical_reason": details["technical_reason"],
         "shadow_technical_signal": details["shadow_technical_signal"],
@@ -854,6 +906,9 @@ def _build_decision_entry(
         "combined_reason": combined_reason,
         "blocking_reason": blocking_reason,
         "score_combined_signal": score_combined_signal,
+        "gate_diagnostics": trade_decision.get("gate_diagnostics"),
+        "ai_status": ai_result.get("status", "ok"),
+        "neutral_reason": combined.get("neutral_reason"),
         "gating_mode": gating_mode,
         "gating_signal": gating_signal or combined.get("signal"),
         "gating_confidence": gating_confidence if gating_confidence is not None else combined.get("confidence"),
@@ -883,8 +938,11 @@ def _save_sqlite_decision(conn, entry):
 
 
 def _maybe_create_paper_trade(conn, decision_id, pair, timeframe, ai_result,
-                              combined, current_price, atr_pips, created_at_dt):
+                              combined, current_price, atr_pips, created_at_dt,
+                              trade_decision=None):
     if decision_id is None:
+        return None
+    if trade_decision is not None and not trade_decision.get("trade_allowed"):
         return None
 
     ai_signal = ai_result.get("signal", "NEUTRAL")
@@ -1013,6 +1071,56 @@ def _is_recent_duplicate(current_sig, last_sig, last_timestamp, window_minutes):
     return age_minutes <= window_minutes
 
 
+def _cooldown_state(conn, pair, source, direction, now_dt=None):
+    enabled = _env_bool("COOLDOWN_ENABLED", True)
+    now_dt = now_dt or datetime.now(timezone.utc)
+    config = {
+        "enabled": enabled,
+        "after_trade_hours": _env_int("COOLDOWN_AFTER_TRADE_HOURS", 2),
+        "after_loss_hours": _env_int("COOLDOWN_AFTER_LOSS_HOURS", 3),
+        "max_signals_per_direction": _env_int("MAX_SIGNALS_PER_DIRECTION", 1),
+        "source": source,
+        "direction": direction,
+    }
+    state = {
+        "cooldown_active": False,
+        "max_direction_signals_reached": False,
+        "reason": "",
+        "config": config,
+    }
+    if not enabled or direction not in ("BUY", "SELL"):
+        return state
+
+    since_trade = (now_dt - timedelta(hours=config["after_trade_hours"])).isoformat()
+    recent_same_direction = database.get_recent_paper_trades_for_direction(
+        conn, pair, source, direction, since_trade
+    )
+    if len(recent_same_direction) >= config["max_signals_per_direction"]:
+        state["max_direction_signals_reached"] = True
+        state["reason"] = "max_direction_signals_reached"
+        state["recent_same_direction_count"] = len(recent_same_direction)
+        return state
+
+    last_closed = database.get_last_closed_paper_trade(conn, pair, source=source)
+    if last_closed and last_closed.get("status") == "loss":
+        closed_at = last_closed.get("closed_at")
+        try:
+            closed_dt = datetime.fromisoformat(str(closed_at).replace("Z", "+00:00"))
+        except ValueError:
+            closed_dt = None
+        if closed_dt is not None:
+            if closed_dt.tzinfo is None:
+                closed_dt = closed_dt.replace(tzinfo=timezone.utc)
+            hours_since_loss = (now_dt - closed_dt).total_seconds() / 3600
+            if hours_since_loss < config["after_loss_hours"]:
+                state["cooldown_active"] = True
+                state["reason"] = "cooldown_active"
+                state["hours_since_loss"] = round(hours_since_loss, 2)
+                return state
+
+    return state
+
+
 def _print_signal_outcomes(outcomes):
     if not outcomes:
         return
@@ -1119,35 +1227,39 @@ def main():
     print(f"      análise IA: {ai_origin} ({input_hash[:12]})")
 
     print()
-    combined = _combine_signals(ai_result, technical_result)
+    scoring_config = scoring.load_combined_scoring_config()
+    combined = _combine_signals(ai_result, technical_result, scoring_config=scoring_config)
     shadow_combined = _shadow_combine(ai_result, technical_result)
     current_price = technical_result.get("indicators", {}).get("current_price")
     atr_pips = technical_result.get("indicators", {}).get("atr_pips")
 
     # Computar scores antes do gating para podermos escolher o sinal efectivo.
-    scoring_config = scoring.load_scoring_config()
     ai_score_value = scoring.signal_score(
         ai_result.get("signal"), ai_result.get("confidence")
     )
-    technical_score_value = scoring.technical_votes_score(
-        technical_result.get("indicators", {}).get("rsi_vote",
-            technical_result.get("indicators", {}).get("rsi_signal", "neutral")),
-        technical_result.get("indicators", {}).get("ema_vote",
-            technical_result.get("indicators", {}).get("ema_trend", "neutral")),
-        technical_result.get("indicators", {}).get("macd_vote",
-            technical_result.get("indicators", {}).get("macd_signal", "neutral")),
-    )
+    technical_score_value = technical_result.get("indicators", {}).get("technical_score")
+    if technical_score_value is None:
+        technical_score_value = scoring.technical_votes_score(
+            technical_result.get("indicators", {}).get("rsi_vote",
+                technical_result.get("indicators", {}).get("rsi_signal", "neutral")),
+            technical_result.get("indicators", {}).get("ema_vote",
+                technical_result.get("indicators", {}).get("ema_trend", "neutral")),
+            technical_result.get("indicators", {}).get("macd_vote",
+                technical_result.get("indicators", {}).get("macd_signal", "neutral")),
+        )
     shadow_score_value = scoring.signal_score(
         technical_result.get("shadow_technical_signal"),
         technical_result.get("shadow_technical_confidence"),
     )
     combined_score_value = scoring.combine_scores(
         ai_score_value, technical_score_value,
-        shadow_score=shadow_score_value, config=scoring_config,
+        shadow_score=shadow_score_value,
+        news_score=0.0,
+        config=scoring_config,
     )
     score_signal_value = scoring.score_to_signal(combined_score_value, scoring_config)
 
-    gating_mode = (os.getenv("GATING_MODE") or "strict").strip().lower()
+    gating_mode = (os.getenv("GATING_MODE") or "score").strip().lower()
     gating_combined, gating_mode_used = _select_gating_signal(
         combined, score_signal_value, combined_score_value,
         shadow_combined, gating_mode,
@@ -1158,12 +1270,33 @@ def main():
         _env_int("EVENT_BLOCK_WINDOW_MINUTES", 120),
         relevant_currencies=_pair_currencies(PAIR),
     )
+    market_state = forex_market_state()
+    paper_source = "combined" if gating_combined.get("signal") in ("BUY", "SELL") else "ai_only"
+    cooldown = _cooldown_state(
+        conn,
+        PAIR,
+        paper_source,
+        gating_combined.get("signal"),
+    )
+    gate_context = {
+        "market": market_state,
+        "cooldown": cooldown,
+        "event": event_risk,
+        "allow_buy": _env_bool("ALLOW_BUY", True),
+        "allow_sell": _env_bool("ALLOW_SELL", False),
+        "ai_status": ai_result.get("status", "ok"),
+        "technical_score": technical_score_value,
+        "combined_score": combined_score_value,
+        "neutral_reason": combined.get("neutral_reason"),
+    }
     trade_decision = evaluate_trade(
         PAIR,
         gating_combined,
         current_price,
         event_risk,
         atr_pips=atr_pips,
+        technical_indicators=technical_result.get("indicators", {}),
+        gate_context=gate_context,
     )
     _print_final(ai_result, technical_result, combined, trade_decision)
     print()
@@ -1227,10 +1360,11 @@ def main():
             pair=PAIR,
             timeframe=TIMEFRAME,
             ai_result=ai_result,
-            combined=combined,
+            combined=gating_combined,
             current_price=current_price,
             atr_pips=atr_pips,
             created_at_dt=datetime.now(timezone.utc),
+            trade_decision=trade_decision,
         )
         if paper_trade_id is not None:
             print(f"[paper-trade] criado #{paper_trade_id} ({decision_entry['ai_signal']}/"

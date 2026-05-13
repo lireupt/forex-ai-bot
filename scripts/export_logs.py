@@ -73,6 +73,20 @@ def _parse_features_snapshot(value):
     return {}
 
 
+def _parse_json_obj(value):
+    if value is None or value == "":
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _first_text(row, *keys):
     for key in keys:
         value = row.get(key)
@@ -162,6 +176,9 @@ def _normalise(row, paper_trade_lookup=None):
         "volatility_level": _volatility_level(atr_pips),
         "dangerous_event_nearby": _coerce_bool(row.get("dangerous_event_nearby")),
         "dangerous_event_reason": row.get("dangerous_event_reason") or "",
+        "gate_diagnostics": _parse_json_obj(row.get("gate_diagnostics_json") or row.get("gate_diagnostics")),
+        "ai_status": row.get("ai_status") or "ok",
+        "neutral_reason": row.get("neutral_reason") or "",
         "ai_score": _coerce_float(row.get("ai_score")),
         "ai_confidence_score": _coerce_float(row.get("ai_confidence_score")),
         "ai_analysis_text": _ai_analysis_text(row),
@@ -183,6 +200,7 @@ def _normalise(row, paper_trade_lookup=None):
         "ema50_value": row.get("ema50_value"),
         "macd_value": row.get("macd_value"),
         "macd_signal_value": row.get("macd_signal_value"),
+        "adx_value": row.get("adx_value"),
         "rsi_vote": row.get("rsi_vote") or "neutral",
         "ema_vote": row.get("ema_vote") or "neutral",
         "macd_vote": row.get("macd_vote") or "neutral",
@@ -226,15 +244,45 @@ def _summarise_paper_trades(trades):
         closed = wins + losses
         pips = [t["result_pips"] for t in filtered if t.get("result_pips") is not None]
         rs = [t["result_r_multiple"] for t in filtered if t.get("result_r_multiple") is not None]
+        profit = sum(t["result_pips"] for t in filtered if t.get("result_pips") is not None and t["result_pips"] > 0)
+        loss = -sum(t["result_pips"] for t in filtered if t.get("result_pips") is not None and t["result_pips"] < 0)
+        loss_streak = 0
+        max_loss_streak = 0
+        equity = peak = 100.0
+        max_dd = 0.0
+        for t in sorted(filtered, key=lambda item: item.get("closed_at") or item.get("created_at") or ""):
+            if t.get("status") == "loss":
+                loss_streak += 1
+                max_loss_streak = max(max_loss_streak, loss_streak)
+            elif t.get("status") == "win":
+                loss_streak = 0
+            if t.get("result_r_multiple") is not None:
+                equity += float(t["result_r_multiple"])
+                peak = max(peak, equity)
+                if peak > 0:
+                    max_dd = max(max_dd, (peak - equity) / peak * 100)
+        profit_factor = None
+        if loss > 0:
+            profit_factor = round(profit / loss, 2)
+        elif profit > 0:
+            profit_factor = 999.0
+        status = "partial"
+        if closed >= 50:
+            status = "go" if (profit_factor or 0) >= 1.3 and (sum(rs) / len(rs) if rs else 0) >= 0.2 else "no_go"
         return {
+            "n": total,
             "total": total,
             "open": open_count,
             "wins": wins,
             "losses": losses,
             "expired": expired,
             "win_rate": round(wins / closed * 100, 1) if closed else None,
+            "profit_factor": profit_factor,
             "avg_pips": round(sum(pips) / len(pips), 1) if pips else None,
             "avg_r": round(sum(rs) / len(rs), 2) if rs else None,
+            "max_drawdown": round(max_dd, 2),
+            "max_loss_streak": max_loss_streak,
+            "status": status,
             "best_pips": round(max(pips), 1) if pips else None,
             "worst_pips": round(min(pips), 1) if pips else None,
         }
@@ -243,6 +291,7 @@ def _summarise_paper_trades(trades):
         "all": _aggregate(trades),
         "ai_only": _aggregate([t for t in trades if t.get("source") == "ai_only"]),
         "combined": _aggregate([t for t in trades if t.get("source") == "combined"]),
+        "shadow_combined": _aggregate([t for t in trades if t.get("source") == "shadow_combined"]),
         "buy": _aggregate([t for t in trades if t.get("direction") == "BUY"]),
         "sell": _aggregate([t for t in trades if t.get("direction") == "SELL"]),
     }
@@ -291,6 +340,12 @@ def _read_from_sqlite(limit):
                 if "ai_analysis_text" in cols
                 else "NULL AS ai_analysis_text"
             )
+            cols_expr = {
+                "gate_diagnostics_json": "gate_diagnostics_json" if "gate_diagnostics_json" in cols else "NULL AS gate_diagnostics_json",
+                "ai_status": "ai_status" if "ai_status" in cols else "NULL AS ai_status",
+                "neutral_reason": "neutral_reason" if "neutral_reason" in cols else "NULL AS neutral_reason",
+                "adx_value": "adx_value" if "adx_value" in cols else "NULL AS adx_value",
+            }
             rows = conn.execute(
                 f"""
                 SELECT timestamp, pair, timeframe, ai_signal, technical_signal,
@@ -301,13 +356,17 @@ def _read_from_sqlite(limit):
                        trade_allowed, block_reason, blocking_reason,
                        current_price, atr_pips, atr_price,
                        dangerous_event_nearby, dangerous_event_reason,
+                       {cols_expr['gate_diagnostics_json']},
+                       {cols_expr['ai_status']},
+                       {cols_expr['neutral_reason']},
                        ai_score, ai_confidence_score, {ai_analysis_select}, ai_reason,
                        ai_features_snapshot, ai_model_version,
                        technical_score, technical_reason, shadow_score,
                        shadow_technical_reason, shadow_technical_confidence,
                        combined_score, combined_reason,
                        rsi_value, ema20_value, ema50_value, macd_value,
-                       macd_signal_value, rsi_vote, ema_vote, macd_vote,
+                       macd_signal_value, {cols_expr['adx_value']},
+                       rsi_vote, ema_vote, macd_vote,
                        paper_trade_id
                 FROM decisions
                 ORDER BY id DESC
