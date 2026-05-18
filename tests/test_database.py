@@ -56,12 +56,22 @@ def _make_decision_entry(**overrides):
         "ai_reason": "AI thinks BUY",
         "ai_features_snapshot": {"close": 1.1756, "rsi": 58.2},
         "ai_model_version": "groq:llama-3.3-70b-versatile",
+        "ai_bias": "BUY",
+        "ai_confidence_adjustment": 0.12,
+        "ai_risk_adjustment": -0.05,
+        "macro_context": "bullish_eur",
+        "volatility_context": "medium",
+        "news_sentiment": "positive",
+        "ai_context_reason": "Fed dovish.",
         "technical_score": 0.0,
         "shadow_score": 0.0,
         "combined_score": 0.36,
         "combined_reason": "AI=BUY (+0.60), tech=NEUTRAL (+0.00) -> +0.36",
         "blocking_reason": "sinal combinado é NEUTRAL",
         "score_combined_signal": "BUY",
+        "operational_mode": "trade",
+        "operational_can_trade": True,
+        "operational_block_reason": "",
     }
     base.update(overrides)
     return base
@@ -97,8 +107,15 @@ class TestSchema:
         for col in [
             "ai_score", "ai_confidence_score", "ai_analysis_text", "ai_reason",
             "ai_features_snapshot", "ai_model_version", "technical_score",
+            "ai_bias", "ai_confidence_adjustment", "ai_risk_adjustment",
+            "macro_context", "volatility_context", "news_sentiment",
+            "ai_context_reason",
+            "technical_score_m15", "technical_score_h1", "technical_score_h4",
+            "technical_score_d1", "multi_timeframe_score", "timeframe_alignment",
+            "timeframe_block_reason",
             "shadow_score", "combined_score",
             "combined_reason", "blocking_reason", "score_combined_signal", "paper_trade_id",
+            "operational_mode", "operational_can_trade", "operational_block_reason",
         ]:
             assert col in cols, f"coluna {col} em falta"
 
@@ -127,6 +144,15 @@ class TestSchema:
         ]:
             assert col in cols, f"coluna {col} em falta na gate_checks"
 
+    def test_init_creates_analytics_metrics_table(self, memory_db):
+        cols = {row["name"] for row in memory_db.execute("PRAGMA table_info(analytics_metrics)").fetchall()}
+        for col in [
+            "winrate", "average_rr", "profit_factor", "expectancy",
+            "max_drawdown", "sharpe_ratio", "average_score", "ai_impact",
+            "h4_d1_impact", "alignment_success_rate", "metrics_json",
+        ]:
+            assert col in cols, f"coluna {col} em falta na analytics_metrics"
+
 
 class TestSaveDecision:
     def test_returns_lastrowid(self, memory_db):
@@ -146,6 +172,11 @@ class TestSaveDecision:
         assert row["ai_analysis_text"] == "Full AI market assessment with fundamentals and technical context."
         assert row["ai_model_version"] == "groq:llama-3.3-70b-versatile"
         assert row["combined_score"] == 0.36
+        assert row["ai_bias"] == "BUY"
+        assert row["ai_confidence_adjustment"] == 0.12
+        assert row["ai_risk_adjustment"] == -0.05
+        assert row["operational_mode"] == "trade"
+        assert row["operational_can_trade"] == 1
         assert row["score_combined_signal"] == "BUY"
         assert row["blocking_reason"] == "sinal combinado é NEUTRAL"
         # snapshot é guardado como JSON string

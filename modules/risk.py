@@ -123,6 +123,16 @@ def _build_order(pair, signal, confidence, current_price, config, reason, atr_pi
     }
 
 
+def _apply_risk_adjustment(config, adjustment):
+    try:
+        adj = float(adjustment or 0.0)
+    except (TypeError, ValueError):
+        adj = 0.0
+    adj = max(-0.5, min(0.5, adj))
+    adjusted = config["risk_per_trade_percent"] * (1.0 + adj)
+    return max(0.1, round(adjusted, 4))
+
+
 def _append_gate(result, reason):
     result.setdefault("gate_reasons", [])
     if reason and reason not in result["gate_reasons"]:
@@ -257,6 +267,11 @@ def evaluate_trade(
         _append_gate(result, market_state.get("gate") or "market_closed_session")
         return result
 
+    operational = (gate_context or {}).get("operational") or {}
+    if operational and not operational.get("can_open_trade", True):
+        _append_gate(result, operational.get("block_reason") or "outside_operational_trade_window")
+        return result
+
     cooldown = (gate_context or {}).get("cooldown") or {}
     if cooldown.get("cooldown_active"):
         _append_gate(result, "cooldown_active")
@@ -277,13 +292,17 @@ def evaluate_trade(
                 _append_gate(result, block)
             return result
 
+    risk_adjustment = (gate_context or {}).get("ai_risk_adjustment", 0.0)
+    order_config = dict(config)
+    order_config["risk_per_trade_percent"] = _apply_risk_adjustment(config, risk_adjustment)
+
     result["trade_allowed"] = True
     result["simulated_order"] = _build_order(
         pair=pair,
         signal=signal,
         confidence=confidence,
         current_price=float(current_price),
-        config=config,
+        config=order_config,
         reason=reason,
         atr_pips=atr_pips,
     )

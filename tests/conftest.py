@@ -35,6 +35,7 @@ def _isolate_env(monkeypatch):
         "GATE_MIN_TRADES", "GATE_MIN_PROFIT_FACTOR", "GATE_MIN_AVG_R",
         "GATE_MIN_WIN_RATE", "GATE_MAX_STREAK_LOSSES",
         "GATE_MAX_DRAWDOWN_PCT",
+        "BOT_MODE", "TRADE_WINDOW_TOLERANCE_MINUTES",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)

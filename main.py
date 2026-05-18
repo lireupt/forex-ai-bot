@@ -16,9 +16,11 @@ from modules.ai_analyst import (
 from modules import database
 from modules.market import forex_market_state, is_forex_market_open
 from modules.news_scraper import fetch_all_events, fetch_all_news
+from modules.operational import operational_state
 from modules.price_feed import PROVIDER as PRICE_PROVIDER, fetch_candles
 from modules.risk import evaluate_trade
 from modules import scoring
+from modules import multi_timeframe
 from modules.technical import analyse as analyse_technical
 from scripts.export_logs import export as export_web_data
 
@@ -26,6 +28,12 @@ load_dotenv()
 
 PAIR = "EUR/USD"
 TIMEFRAME = "1h"
+TIMEFRAMES = {
+    "m15": "15m",
+    "h1": "1h",
+    "h4": "4h",
+    "d1": "1d",
+}
 DECISIONS_LOG = Path("logs/decisions.jsonl")
 PAPER_TRADE_DEFAULT_SL_MULT = 1.0
 PAPER_TRADE_DEFAULT_TP_MULT = 2.0
@@ -237,12 +245,12 @@ def _get_events(conn, cache_config):
     return events, sources, "fresh"
 
 
-def _get_candles(conn, cache_config, count=100):
+def _get_candles(conn, cache_config, count=100, timeframe=TIMEFRAME):
     if cache_config["use_cache"] and not cache_config["force_refresh"]:
         cached = database.get_recent_market_candles(
             conn,
             PAIR,
-            TIMEFRAME,
+            timeframe,
             PRICE_PROVIDER,
             _cutoff(minutes=cache_config["price_cache_minutes"]),
             count,
@@ -250,16 +258,84 @@ def _get_candles(conn, cache_config, count=100):
         if cached:
             return _candles_to_df(cached), "cache"
 
-    candles = fetch_candles(pair=PAIR, timeframe=TIMEFRAME, count=count)
+    candles = fetch_candles(pair=PAIR, timeframe=timeframe, count=count)
     if not candles.empty:
         database.save_market_candles(
             conn,
             _df_to_candles(candles),
             PAIR,
-            TIMEFRAME,
+            timeframe,
             PRICE_PROVIDER,
         )
     return candles, "fresh"
+
+
+def _get_multi_timeframe_technical(conn, cache_config, count=260):
+    technical_by_tf = {}
+    candles_by_tf = {}
+    origins = {}
+    warnings = []
+
+    for key, timeframe in TIMEFRAMES.items():
+        candles, origin = _get_candles(conn, cache_config, count=count, timeframe=timeframe)
+        origins[key] = origin
+        candles_by_tf[key] = candles
+        if candles is None or candles.empty:
+            warnings.append(f"{key.upper()} sem candles; usado NEUTRAL 0.0")
+            technical_by_tf[key] = analyse_technical(candles, PAIR, timeframe_role=key)
+            continue
+        technical_by_tf[key] = analyse_technical(candles, PAIR, timeframe_role=key)
+        if (
+            technical_by_tf[key].get("signal") == "NEUTRAL"
+            and technical_by_tf[key].get("indicators", {}).get("technical_score") == 0.0
+            and "Sem candles ou indicadores suficientes" in technical_by_tf[key].get("technical_reason", "")
+        ):
+            warnings.append(f"{key.upper()} com indicadores insuficientes; usado NEUTRAL 0.0")
+
+    aggregate = multi_timeframe.aggregate(technical_by_tf)
+    h1_result = dict(technical_by_tf.get("h1") or analyse_technical(None, PAIR, timeframe_role="h1"))
+    h1_indicators = dict(h1_result.get("indicators") or {})
+    h1_score = aggregate["technical_score_h1"]
+    multi_score = aggregate["multi_timeframe_score"]
+    multi_signal = aggregate["multi_timeframe_signal"]
+    confidence = int(round(abs(multi_score) * 100 * aggregate["timeframe_confidence_adjustment"]))
+    confidence = max(0, min(100, confidence))
+    reason = (
+        f"H1={h1_score:+.2f} continua principal; "
+        f"M15={aggregate['technical_score_m15']:+.2f}, "
+        f"H4={aggregate['technical_score_h4']:+.2f}, "
+        f"D1={aggregate['technical_score_d1']:+.2f}; "
+        f"multi_timeframe_score={multi_score:+.2f} -> {multi_signal}; "
+        f"alinhamento={aggregate['timeframe_alignment']}."
+    )
+    if aggregate["timeframe_notes"]:
+        reason += " " + "; ".join(aggregate["timeframe_notes"]) + "."
+    if warnings:
+        reason += " Avisos: " + "; ".join(warnings) + "."
+
+    h1_indicators.update({
+        "technical_score": multi_score,
+        "technical_signal": multi_signal,
+        "technical_score_m15": aggregate["technical_score_m15"],
+        "technical_score_h1": aggregate["technical_score_h1"],
+        "technical_score_h4": aggregate["technical_score_h4"],
+        "technical_score_d1": aggregate["technical_score_d1"],
+        "multi_timeframe_score": multi_score,
+        "timeframe_alignment": aggregate["timeframe_alignment"],
+        "timeframe_block_reason": aggregate["timeframe_block_reason"],
+    })
+    h1_result.update({
+        "signal": multi_signal,
+        "confidence": confidence,
+        "technical_reason": reason,
+        "indicators": h1_indicators,
+        "timeframe_results": technical_by_tf,
+        "timeframe_candle_status": origins,
+        "timeframe_candle_counts": {tf: len(df) if df is not None else 0 for tf, df in candles_by_tf.items()},
+        "timeframe_warnings": warnings,
+        **aggregate,
+    })
+    return h1_result, candles_by_tf.get("h1"), origins, warnings
 
 
 def _get_ai_result(conn, cache_config, provider, news, events, technical=None):
@@ -286,6 +362,47 @@ def _neutral_reason(ai_score, technical_score, combined_score, ai_signal, techni
     return "combined_score_below_threshold"
 
 
+def _direction_score(signal):
+    if signal == "BUY":
+        return 1.0
+    if signal == "SELL":
+        return -1.0
+    return 0.0
+
+
+def _ai_context_score(ai_result):
+    bias = (ai_result.get("bias") or ai_result.get("signal") or "NEUTRAL").upper()
+    adjustment = ai_result.get("confidence_adjustment")
+    if adjustment is None:
+        legacy_conf = scoring.confidence_to_unit(ai_result.get("confidence"))
+        adjustment = legacy_conf * 0.20
+    try:
+        adjustment = float(adjustment)
+    except (TypeError, ValueError):
+        adjustment = 0.0
+    adjustment = max(-0.25, min(0.25, adjustment))
+    return round(_direction_score(bias) * adjustment, 4)
+
+
+def _decision_confidence_adjustment(technical_result):
+    alignment = technical_result.get("timeframe_alignment") or ""
+    adjustment = 0.0
+    reasons = []
+    if "h1_h4_aligned" in alignment:
+        adjustment += 0.10
+        reasons.append("h1_h4_aligned:+0.10")
+    if "m15_against" in alignment:
+        adjustment -= 0.10
+        reasons.append("m15_against_h1:-0.10")
+    if alignment == "d1_strongly_against_h1":
+        adjustment -= 0.20
+        reasons.append("d1_strongly_against_h1:-0.20")
+    if technical_result.get("timeframe_block_reason"):
+        adjustment -= 0.20
+        reasons.append("h4_d1_strongly_against_h1:-0.20")
+    return round(adjustment, 4), reasons
+
+
 def _combine_signals(ai_result, technical_result, scoring_config=None, news_score=0.0):
     ai_signal = ai_result.get("signal", "NEUTRAL")
     technical_signal = technical_result.get("signal", "NEUTRAL")
@@ -305,7 +422,7 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
 
     scoring_config = scoring_config or scoring.load_scoring_config()
     indicators = technical_result.get("indicators", {})
-    ai_score = scoring.signal_score(ai_signal, ai_result.get("confidence"))
+    ai_score = _ai_context_score(ai_result)
     technical_score = indicators.get("technical_score")
     if technical_score is None:
         technical_score = scoring.technical_votes_score(
@@ -320,23 +437,35 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
         config=scoring_config,
     )
     signal = scoring.score_to_signal(combined_score, scoring_config)
+    timeframe_block_reason = technical_result.get("timeframe_block_reason") or ""
+    confidence_adjustment, confidence_reasons = _decision_confidence_adjustment(technical_result)
     neutral_reason = ""
     if signal == "NEUTRAL":
         neutral_reason = _neutral_reason(
             ai_score, technical_score, combined_score, ai_signal, technical_signal
         )
+    if timeframe_block_reason and signal != "NEUTRAL":
+        reasoning = f"{reasoning} [timeframe_block={timeframe_block_reason}]"
 
     return {
         "signal": signal,
-        "confidence": int(round(abs(combined_score) * 100)),
-        "hold_off": bool(ai_result.get("hold_off", False)),
+        "confidence": max(0, min(100, int(round((abs(combined_score) + confidence_adjustment) * 100)))),
+        "hold_off": bool(ai_result.get("hold_off", False)) or bool(timeframe_block_reason),
         "reasoning": reasoning,
         "agreement": ai_signal == technical_signal and ai_signal in ("BUY", "SELL"),
         "combined_score": combined_score,
         "components": {
             "ai_score": round(ai_score, 4),
+            "ai_bias": ai_result.get("bias", ai_signal),
+            "ai_confidence_adjustment": ai_result.get("confidence_adjustment", 0.0),
+            "ai_risk_adjustment": ai_result.get("risk_adjustment", 0.0),
             "technical_score": round(float(technical_score or 0.0), 4),
             "news_score": round(float(news_score or 0.0), 4),
+            "technical_score_m15": technical_result.get("technical_score_m15"),
+            "technical_score_h1": technical_result.get("technical_score_h1"),
+            "technical_score_h4": technical_result.get("technical_score_h4"),
+            "technical_score_d1": technical_result.get("technical_score_d1"),
+            "multi_timeframe_score": technical_result.get("multi_timeframe_score"),
             "weights": {
                 "ai": scoring_config["ai_weight"],
                 "technical": scoring_config["technical_weight"],
@@ -344,6 +473,9 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
             },
         },
         "neutral_reason": neutral_reason,
+        "timeframe_block_reason": timeframe_block_reason,
+        "confidence_adjustment": confidence_adjustment,
+        "confidence_adjustment_reasons": confidence_reasons,
     }
 
 
@@ -522,6 +654,13 @@ def _build_features_snapshot(technical_result, candles_df, ai_result):
         "ai_confidence": ai_result.get("confidence"),
         "ai_risk_level": ai_result.get("risk_level"),
         "ai_hold_off": bool(ai_result.get("hold_off")),
+        "technical_score_m15": indicators.get("technical_score_m15"),
+        "technical_score_h1": indicators.get("technical_score_h1"),
+        "technical_score_h4": indicators.get("technical_score_h4"),
+        "technical_score_d1": indicators.get("technical_score_d1"),
+        "multi_timeframe_score": indicators.get("multi_timeframe_score"),
+        "timeframe_alignment": indicators.get("timeframe_alignment"),
+        "timeframe_block_reason": indicators.get("timeframe_block_reason"),
     }
     ema20 = indicators.get("ema20")
     ema50 = indicators.get("ema50")
@@ -661,9 +800,10 @@ def _recent_change_pct(candles_df, n=5):
 def _build_combined_reason(ai_result, technical_result, combined, score_combined_signal,
                            ai_score, technical_score, combined_score):
     ai_signal = ai_result.get("signal", "NEUTRAL")
+    ai_bias = ai_result.get("bias", ai_signal)
     tech_signal = technical_result.get("signal", "NEUTRAL")
     base = (
-        f"IA={ai_signal} (score {ai_score:+.2f}); "
+        f"IA contexto={ai_bias} (ajuste score {ai_score:+.2f}); "
         f"técnica={tech_signal} (score {technical_score:+.2f}); "
         f"score combinado={combined_score:+.2f} -> {score_combined_signal}."
     )
@@ -675,6 +815,18 @@ def _build_combined_reason(ai_result, technical_result, combined, score_combined
             f"técnica={weights.get('technical', 0):.2f}, "
             f"news={weights.get('news', 0):.2f}."
         )
+    mtf = technical_result.get("multi_timeframe_score")
+    if mtf is not None:
+        base += (
+            f" Multi-TF={float(mtf):+.2f} "
+            f"(M15={float(technical_result.get('technical_score_m15') or 0):+.2f}, "
+            f"H1={float(technical_result.get('technical_score_h1') or 0):+.2f}, "
+            f"H4={float(technical_result.get('technical_score_h4') or 0):+.2f}, "
+            f"D1={float(technical_result.get('technical_score_d1') or 0):+.2f}); "
+            f"alinhamento={technical_result.get('timeframe_alignment') or 'n/a'}."
+        )
+    if technical_result.get("timeframe_block_reason"):
+        base += f" Timeframe block: {technical_result.get('timeframe_block_reason')}."
     if combined.get("agreement"):
         base += " Concordância IA/técnica."
     elif combined.get("neutral_reason"):
@@ -807,6 +959,7 @@ def _build_decision_entry(
     gating_mode="strict",
     gating_signal=None,
     gating_confidence=None,
+    operational_state=None,
 ):
     indicators = technical_result.get("indicators", {})
     details = _technical_details(technical_result)
@@ -900,7 +1053,21 @@ def _build_decision_entry(
         "ai_reason": ai_reason,
         "ai_features_snapshot": ai_features_snapshot,
         "ai_model_version": _ai_model_version(ai_result, provider),
+        "ai_bias": ai_result.get("bias", ai_result.get("signal", "NEUTRAL")),
+        "ai_confidence_adjustment": ai_result.get("confidence_adjustment", 0.0),
+        "ai_risk_adjustment": ai_result.get("risk_adjustment", 0.0),
+        "macro_context": ai_result.get("macro_context", ""),
+        "volatility_context": ai_result.get("volatility_context", ""),
+        "news_sentiment": ai_result.get("news_sentiment", ""),
+        "ai_context_reason": ai_result.get("reason", ai_result.get("reasoning", "")),
         "technical_score": round(technical_score, 4),
+        "technical_score_m15": technical_result.get("technical_score_m15"),
+        "technical_score_h1": technical_result.get("technical_score_h1"),
+        "technical_score_h4": technical_result.get("technical_score_h4"),
+        "technical_score_d1": technical_result.get("technical_score_d1"),
+        "multi_timeframe_score": technical_result.get("multi_timeframe_score"),
+        "timeframe_alignment": technical_result.get("timeframe_alignment"),
+        "timeframe_block_reason": technical_result.get("timeframe_block_reason"),
         "shadow_score": round(shadow_score, 4),
         "combined_score": combined_score,
         "combined_reason": combined_reason,
@@ -912,6 +1079,9 @@ def _build_decision_entry(
         "gating_mode": gating_mode,
         "gating_signal": gating_signal or combined.get("signal"),
         "gating_confidence": gating_confidence if gating_confidence is not None else combined.get("confidence"),
+        "operational_mode": (operational_state or {}).get("mode"),
+        "operational_can_trade": (operational_state or {}).get("can_open_trade"),
+        "operational_block_reason": (operational_state or {}).get("block_reason"),
     }
 
 
@@ -945,17 +1115,12 @@ def _maybe_create_paper_trade(conn, decision_id, pair, timeframe, ai_result,
     if trade_decision is not None and not trade_decision.get("trade_allowed"):
         return None
 
-    ai_signal = ai_result.get("signal", "NEUTRAL")
     combined_signal = combined.get("signal", "NEUTRAL")
 
     if combined_signal in ("BUY", "SELL"):
         direction = combined_signal
         source = "combined"
         signal_source = "combined_signal"
-    elif ai_signal in ("BUY", "SELL"):
-        direction = ai_signal
-        source = "ai_only"
-        signal_source = "ai_signal"
     else:
         return None
 
@@ -1215,10 +1380,22 @@ def main():
     print()
     _print_sources(news_sources, event_sources)
 
-    print("\n[3/4] A correr análise técnica...")
-    candles, candles_origin = _get_candles(conn, cache_config, count=100)
-    technical_result = analyse_technical(candles, PAIR)
-    print(f"      {len(candles)} candles lidas ({candles_origin})")
+    print("\n[3/4] A correr análise técnica multi-timeframe...")
+    technical_result, candles, candle_origins, timeframe_warnings = _get_multi_timeframe_technical(
+        conn, cache_config, count=260
+    )
+    candles_origin = candle_origins.get("h1", "unknown")
+    candle_counts = technical_result.get("timeframe_candle_counts") or {}
+    print(
+        "      candles: "
+        + ", ".join(
+            f"{tf.upper()}={candle_counts.get(tf, 0)} ({candle_origins.get(tf, 'unknown')})"
+            for tf in multi_timeframe.ORDERED_TIMEFRAMES
+        )
+        + f"; H1 principal={len(candles)} ({candles_origin})"
+    )
+    for warning in timeframe_warnings:
+        print(f"      aviso: {warning}")
 
     print("[4/4] A analisar com IA (com snapshot técnico)...")
     ai_result, input_hash, ai_origin = _get_ai_result(
@@ -1234,9 +1411,7 @@ def main():
     atr_pips = technical_result.get("indicators", {}).get("atr_pips")
 
     # Computar scores antes do gating para podermos escolher o sinal efectivo.
-    ai_score_value = scoring.signal_score(
-        ai_result.get("signal"), ai_result.get("confidence")
-    )
+    ai_score_value = _ai_context_score(ai_result)
     technical_score_value = technical_result.get("indicators", {}).get("technical_score")
     if technical_score_value is None:
         technical_score_value = scoring.technical_votes_score(
@@ -1258,6 +1433,7 @@ def main():
         config=scoring_config,
     )
     score_signal_value = scoring.score_to_signal(combined_score_value, scoring_config)
+    confidence_adjustment, confidence_adjustment_reasons = _decision_confidence_adjustment(technical_result)
 
     gating_mode = (os.getenv("GATING_MODE") or "score").strip().lower()
     gating_combined, gating_mode_used = _select_gating_signal(
@@ -1271,7 +1447,11 @@ def main():
         relevant_currencies=_pair_currencies(PAIR),
     )
     market_state = forex_market_state()
-    paper_source = "combined" if gating_combined.get("signal") in ("BUY", "SELL") else "ai_only"
+    paper_source = "combined"
+    op_state = operational_state(
+        mode=os.getenv("BOT_MODE") or "trade",
+        tolerance_minutes=_env_int("TRADE_WINDOW_TOLERANCE_MINUTES", 0),
+    )
     cooldown = _cooldown_state(
         conn,
         PAIR,
@@ -1282,10 +1462,18 @@ def main():
         "market": market_state,
         "cooldown": cooldown,
         "event": event_risk,
+        "operational": op_state,
         "allow_buy": _env_bool("ALLOW_BUY", True),
         "allow_sell": _env_bool("ALLOW_SELL", False),
         "ai_status": ai_result.get("status", "ok"),
+        "ai_bias": ai_result.get("bias", ai_result.get("signal")),
+        "ai_risk_adjustment": ai_result.get("risk_adjustment", 0.0),
+        "confidence_adjustment": confidence_adjustment,
+        "confidence_adjustment_reasons": confidence_adjustment_reasons,
         "technical_score": technical_score_value,
+        "multi_timeframe_score": technical_result.get("multi_timeframe_score"),
+        "timeframe_alignment": technical_result.get("timeframe_alignment"),
+        "timeframe_block_reason": technical_result.get("timeframe_block_reason"),
         "combined_score": combined_score_value,
         "neutral_reason": combined.get("neutral_reason"),
     }
@@ -1310,8 +1498,20 @@ def main():
         f"-> {score_signal_value}"
     )
     print(
+        f"Multi-TF: M15={technical_result.get('technical_score_m15'):+.2f} "
+        f"H1={technical_result.get('technical_score_h1'):+.2f} "
+        f"H4={technical_result.get('technical_score_h4'):+.2f} "
+        f"D1={technical_result.get('technical_score_d1'):+.2f} "
+        f"-> {technical_result.get('multi_timeframe_score'):+.2f} "
+        f"({technical_result.get('timeframe_alignment')})"
+    )
+    print(
         f"Gating mode: {gating_mode_used} -> {gating_combined['signal']} "
         f"({gating_combined['confidence']}%)"
+    )
+    print(
+        f"Operacional: {op_state['mode']} can_trade={op_state['can_open_trade']} "
+        f"{op_state.get('block_reason') or ''}"
     )
 
     source_status = {
@@ -1345,6 +1545,7 @@ def main():
         gating_mode=gating_mode_used,
         gating_signal=gating_combined.get("signal"),
         gating_confidence=gating_combined.get("confidence"),
+        operational_state=op_state,
     )
 
     if is_duplicate:
@@ -1369,6 +1570,16 @@ def main():
         if paper_trade_id is not None:
             print(f"[paper-trade] criado #{paper_trade_id} ({decision_entry['ai_signal']}/"
                   f"{decision_entry['combined_signal']})")
+
+    try:
+        analytics = database.save_analytics_metrics(conn, pair=PAIR)
+        print(
+            "[analytics] "
+            f"winrate={analytics.get('winrate')} avg_rr={analytics.get('average_rr')} "
+            f"pf={analytics.get('profit_factor')} expectancy={analytics.get('expectancy')}"
+        )
+    except Exception as e:
+        print(f"[analytics] falhou: {type(e).__name__}: {e}")
 
     outcome_stats = database.update_decision_outcomes(
         conn,

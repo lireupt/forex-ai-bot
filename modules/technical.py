@@ -20,6 +20,7 @@ def _neutral_result():
             "rsi_vote": "neutral",
             "ema20": None,
             "ema50": None,
+            "ema200": None,
             "ema_trend": "neutral",
             "ema_vote": "neutral",
             "macd": None,
@@ -36,6 +37,8 @@ def _neutral_result():
             "volatility_reason": "ATR indisponível.",
             "current_price": None,
             "ema20_minus_ema50": None,
+            "structure": "neutral",
+            "volume_spike": False,
             "technical_score": 0.0,
             "technical_signal": "NEUTRAL",
             "technical_score_reasons": [],
@@ -123,7 +126,32 @@ def _atr_reason(atr_pips):
     return f"Volatilidade elevada: ATR14 em {atr_pips} pips."
 
 
-def analyse(candles_df, pair="EUR/USD"):
+def _market_structure(df, lookback=6):
+    if df is None or len(df) < lookback:
+        return "neutral"
+    recent = df.tail(lookback)
+    first_high = float(recent["high"].iloc[0])
+    last_high = float(recent["high"].iloc[-1])
+    first_low = float(recent["low"].iloc[0])
+    last_low = float(recent["low"].iloc[-1])
+    if last_high > first_high and last_low > first_low:
+        return "bullish"
+    if last_high < first_high and last_low < first_low:
+        return "bearish"
+    return "neutral"
+
+
+def _volume_spike(df, lookback=20, multiplier=1.5):
+    if df is None or "volume" not in df.columns or len(df) < lookback + 1:
+        return False
+    recent = df["volume"].tail(lookback + 1)
+    avg = recent.iloc[:-1].mean()
+    if not avg or pd.isna(avg):
+        return False
+    return float(recent.iloc[-1]) >= float(avg) * multiplier
+
+
+def analyse(candles_df, pair="EUR/USD", timeframe_role=None):
     try:
         if candles_df is None or candles_df.empty:
             return _neutral_result()
@@ -135,6 +163,7 @@ def analyse(candles_df, pair="EUR/USD"):
         df["RSI_14"] = ta.rsi(df["close"], length=14)
         df["EMA_20"] = ta.ema(df["close"], length=20)
         df["EMA_50"] = ta.ema(df["close"], length=50)
+        df["EMA_200"] = ta.ema(df["close"], length=200)
         df["ATR_14"] = ta.atr(df["high"], df["low"], df["close"], length=14)
         adx = ta.adx(df["high"], df["low"], df["close"], length=14)
         if adx is not None and not adx.empty:
@@ -152,6 +181,9 @@ def analyse(candles_df, pair="EUR/USD"):
             "MACD_12_26_9",
             "MACDs_12_26_9",
         ]
+        role = (timeframe_role or "").strip().lower()
+        if role in {"h4", "d1"}:
+            required.append("EMA_200")
         if "ADX_14" in df.columns:
             required.append("ADX_14")
         usable = df.dropna(subset=required)
@@ -162,6 +194,7 @@ def analyse(candles_df, pair="EUR/USD"):
         rsi = float(last["RSI_14"])
         ema20 = float(last["EMA_20"])
         ema50 = float(last["EMA_50"])
+        ema200 = float(last["EMA_200"]) if "EMA_200" in usable.columns and not pd.isna(last["EMA_200"]) else None
         macd_value = float(last["MACD_12_26_9"])
         macd_signal_value = float(last["MACDs_12_26_9"])
         adx14 = float(last["ADX_14"]) if "ADX_14" in usable.columns else None
@@ -176,18 +209,29 @@ def analyse(candles_df, pair="EUR/USD"):
         else:
             rsi_signal = "neutral"
 
-        ema_delta = ema20 - ema50
+        ema_delta = (ema50 - ema200) if role in {"h4", "d1"} and ema200 is not None else ema20 - ema50
         macd_delta = macd_value - macd_signal_value
         ema_trend = "bullish" if ema_delta > 0 else "bearish"
         macd_signal = "bullish" if macd_delta > 0 else "bearish"
         adx_vote = "trend" if adx14 is not None and adx14 >= _env_float("MIN_ADX", 20.0) else "weak"
+        structure = _market_structure(usable)
+        volume_spike = _volume_spike(usable)
 
-        votes = [rsi_signal, ema_trend, macd_signal]
+        if role == "m15":
+            votes = [rsi_signal, ema_trend, "bullish" if volume_spike and ema_trend == "bullish" else "bearish" if volume_spike and ema_trend == "bearish" else "neutral"]
+        elif role == "h1":
+            votes = [ema_trend, macd_signal, structure]
+        elif role == "h4":
+            votes = [ema_trend, macd_signal, structure if adx_vote == "trend" else "neutral"]
+        elif role == "d1":
+            votes = [ema_trend, structure, "neutral"]
+        else:
+            votes = [rsi_signal, ema_trend, macd_signal]
         bullish_votes = votes.count("bullish")
         bearish_votes = votes.count("bearish")
         neutral_votes = votes.count("neutral")
 
-        score, weights = _technical_score(rsi_signal, ema_trend, macd_signal)
+        score, weights = _technical_score(votes[0], votes[1], votes[2])
         mode = _env_str("TECHNICAL_SIGNAL_MODE", "score").lower()
         if mode == "strict":
             if bullish_votes == 3:
@@ -203,13 +247,14 @@ def analyse(candles_df, pair="EUR/USD"):
         confidence = round((majority_votes / 3) * 100)
         shadow_signal, shadow_confidence, shadow_reason = _shadow_signal(votes)
         reasons = [
-            f"RSI={rsi_signal}",
-            f"EMA={ema_trend}",
-            f"MACD={macd_signal}",
+            f"vote1={votes[0]}",
+            f"vote2={votes[1]}",
+            f"vote3={votes[2]}",
             f"score={score:+.2f}",
         ]
         technical_reason = (
-            f"RSI {rsi_signal}; EMA {ema_trend}; MACD {macd_signal}. "
+            f"role={role or 'default'}; RSI {rsi_signal}; EMA {ema_trend}; "
+            f"MACD {macd_signal}; estrutura {structure}. "
             f"Score técnico ponderado={score:+.2f} "
             f"(RSI={weights['rsi']:.2f}, EMA={weights['ema']:.2f}, MACD={weights['macd']:.2f}); "
             f"sinal técnico é {signal}."
@@ -228,6 +273,7 @@ def analyse(candles_df, pair="EUR/USD"):
                 "rsi_vote": rsi_signal,
                 "ema20": _round_or_none(ema20),
                 "ema50": _round_or_none(ema50),
+                "ema200": _round_or_none(ema200),
                 "ema_trend": ema_trend,
                 "ema_vote": ema_trend,
                 "macd": _round_or_none(macd_value, 4),
@@ -244,6 +290,8 @@ def analyse(candles_df, pair="EUR/USD"):
                 "volatility_reason": _atr_reason(_round_or_none(atr_pips, 1)),
                 "current_price": _round_or_none(current_price, 4),
                 "ema20_minus_ema50": _round_or_none(ema_delta, 5),
+                "structure": structure,
+                "volume_spike": volume_spike,
                 "technical_score": _round_or_none(score, 4),
                 "technical_signal": signal,
                 "technical_score_reasons": reasons,

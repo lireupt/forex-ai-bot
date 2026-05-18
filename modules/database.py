@@ -154,6 +154,23 @@ def init_db(conn):
             config_json TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS analytics_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            calculated_at TEXT NOT NULL,
+            pair TEXT,
+            winrate REAL,
+            average_rr REAL,
+            profit_factor REAL,
+            expectancy REAL,
+            max_drawdown REAL,
+            sharpe_ratio REAL,
+            average_score REAL,
+            ai_impact REAL,
+            h4_d1_impact REAL,
+            alignment_success_rate REAL,
+            metrics_json TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS paper_trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             decision_id INTEGER,
@@ -180,9 +197,29 @@ def init_db(conn):
         );
         """
     )
+    _ensure_ai_analysis_columns(conn)
     _ensure_decisions_columns(conn)
     _ensure_paper_trades_columns(conn)
     conn.commit()
+
+
+def _ensure_ai_analysis_columns(conn):
+    existing = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(ai_analyses)").fetchall()
+    }
+    columns = {
+        "bias": "TEXT",
+        "confidence_adjustment": "REAL",
+        "risk_adjustment": "REAL",
+        "macro_context": "TEXT",
+        "volatility_context": "TEXT",
+        "news_sentiment": "TEXT",
+        "context_reason": "TEXT",
+    }
+    for name, column_type in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE ai_analyses ADD COLUMN {name} {column_type}")
 
 
 def _ensure_decisions_columns(conn):
@@ -231,7 +268,21 @@ def _ensure_decisions_columns(conn):
         "ai_reason": "TEXT",
         "ai_features_snapshot": "TEXT",
         "ai_model_version": "TEXT",
+        "ai_bias": "TEXT",
+        "ai_confidence_adjustment": "REAL",
+        "ai_risk_adjustment": "REAL",
+        "macro_context": "TEXT",
+        "volatility_context": "TEXT",
+        "news_sentiment": "TEXT",
+        "ai_context_reason": "TEXT",
         "technical_score": "REAL",
+        "technical_score_m15": "REAL",
+        "technical_score_h1": "REAL",
+        "technical_score_h4": "REAL",
+        "technical_score_d1": "REAL",
+        "multi_timeframe_score": "REAL",
+        "timeframe_alignment": "TEXT",
+        "timeframe_block_reason": "TEXT",
         "shadow_score": "REAL",
         "combined_score": "REAL",
         "combined_reason": "TEXT",
@@ -245,6 +296,9 @@ def _ensure_decisions_columns(conn):
         "gate_diagnostics_json": "TEXT",
         "ai_status": "TEXT",
         "neutral_reason": "TEXT",
+        "operational_mode": "TEXT",
+        "operational_can_trade": "INTEGER",
+        "operational_block_reason": "TEXT",
     }
     for name, column_type in columns.items():
         if name not in existing:
@@ -510,7 +564,9 @@ def get_recent_market_candles(conn, pair, timeframe, provider, since_iso, count)
 def get_ai_analysis(conn, pair, analysis_date, input_hash, provider):
     row = conn.execute(
         """
-        SELECT signal, confidence, reasoning, risk_level, hold_off, provider
+        SELECT signal, confidence, reasoning, risk_level, hold_off, provider,
+               bias, confidence_adjustment, risk_adjustment, macro_context,
+               volatility_context, news_sentiment, context_reason
         FROM ai_analyses
         WHERE pair = ? AND analysis_date = ? AND input_hash = ? AND provider = ?
         """,
@@ -520,6 +576,13 @@ def get_ai_analysis(conn, pair, analysis_date, input_hash, provider):
         return None
     result = dict(row)
     result["hold_off"] = bool(result["hold_off"])
+    result["bias"] = result.get("bias") or result.get("signal") or "NEUTRAL"
+    result["confidence_adjustment"] = float(result.get("confidence_adjustment") or 0.0)
+    result["risk_adjustment"] = float(result.get("risk_adjustment") or 0.0)
+    result["macro_context"] = result.get("macro_context") or "cached_legacy"
+    result["volatility_context"] = result.get("volatility_context") or "medium"
+    result["news_sentiment"] = result.get("news_sentiment") or "neutral"
+    result["reason"] = result.get("context_reason") or result.get("reasoning") or ""
     return result
 
 
@@ -529,8 +592,10 @@ def save_ai_analysis(conn, pair, analysis_date, input_hash, result):
     conn.execute(
         """
         INSERT OR IGNORE INTO ai_analyses
-        (pair, analysis_date, input_hash, signal, confidence, reasoning, risk_level, hold_off, provider, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (pair, analysis_date, input_hash, signal, confidence, reasoning, risk_level,
+         hold_off, provider, bias, confidence_adjustment, risk_adjustment,
+         macro_context, volatility_context, news_sentiment, context_reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             pair,
@@ -542,6 +607,13 @@ def save_ai_analysis(conn, pair, analysis_date, input_hash, result):
             result.get("risk_level", ""),
             int(bool(result.get("hold_off", True))),
             result.get("provider", ""),
+            result.get("bias", result.get("signal", "NEUTRAL")),
+            float(result.get("confidence_adjustment") or 0.0),
+            float(result.get("risk_adjustment") or 0.0),
+            result.get("macro_context", ""),
+            result.get("volatility_context", ""),
+            result.get("news_sentiment", ""),
+            result.get("reason", result.get("reasoning", "")),
             utc_now(),
         ),
     )
@@ -575,11 +647,16 @@ def save_decision(conn, entry):
          dangerous_event_reason, simulated_order_json, decision_signature,
          stop_loss_pips_used, take_profit_pips_used, sl_tp_mode,
          ai_score, ai_confidence_score, ai_analysis_text, ai_reason, ai_features_snapshot,
-         ai_model_version, technical_score, shadow_score, combined_score,
+         ai_model_version, ai_bias, ai_confidence_adjustment, ai_risk_adjustment,
+         macro_context, volatility_context, news_sentiment, ai_context_reason,
+         technical_score, technical_score_m15, technical_score_h1,
+         technical_score_h4, technical_score_d1, multi_timeframe_score,
+         timeframe_alignment, timeframe_block_reason, shadow_score, combined_score,
          combined_reason, blocking_reason, score_combined_signal,
          gating_mode, gating_signal, gating_confidence, adx_value,
-         gate_diagnostics_json, ai_status, neutral_reason, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         gate_diagnostics_json, ai_status, neutral_reason, operational_mode,
+         operational_can_trade, operational_block_reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             entry["timestamp"],
@@ -631,7 +708,21 @@ def save_decision(conn, entry):
             entry.get("ai_reason"),
             features_snapshot_json,
             entry.get("ai_model_version"),
+            entry.get("ai_bias"),
+            entry.get("ai_confidence_adjustment"),
+            entry.get("ai_risk_adjustment"),
+            entry.get("macro_context"),
+            entry.get("volatility_context"),
+            entry.get("news_sentiment"),
+            entry.get("ai_context_reason"),
             entry.get("technical_score"),
+            entry.get("technical_score_m15"),
+            entry.get("technical_score_h1"),
+            entry.get("technical_score_h4"),
+            entry.get("technical_score_d1"),
+            entry.get("multi_timeframe_score"),
+            entry.get("timeframe_alignment"),
+            entry.get("timeframe_block_reason"),
             entry.get("shadow_score"),
             entry.get("combined_score"),
             entry.get("combined_reason"),
@@ -644,6 +735,9 @@ def save_decision(conn, entry):
             gate_diagnostics_json,
             entry.get("ai_status"),
             entry.get("neutral_reason"),
+            entry.get("operational_mode"),
+            int(bool(entry.get("operational_can_trade"))),
+            entry.get("operational_block_reason"),
             utc_now(),
         ),
     )
@@ -1189,3 +1283,126 @@ def get_recent_decision_quality(conn, limit=20):
         "dangerous_event_count": event_count,
         "most_common_block_reason": most_common_reason,
     }
+
+
+def _max_drawdown(values):
+    equity = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for value in values:
+        equity += value
+        peak = max(peak, equity)
+        max_dd = max(max_dd, peak - equity)
+    return round(max_dd, 4)
+
+
+def _sharpe(values):
+    if len(values) < 2:
+        return None
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+    if variance <= 0:
+        return None
+    return round(mean / (variance ** 0.5), 4)
+
+
+def calculate_analytics_metrics(conn, pair=None, limit=500):
+    params = []
+    where = "WHERE status in ('win', 'loss')"
+    if pair:
+        where += " AND pair = ?"
+        params.append(pair)
+    rows = conn.execute(
+        f"""
+        SELECT result_pips, result_r_multiple
+        FROM paper_trades
+        {where}
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        tuple(params + [limit]),
+    ).fetchall()
+    trades = [dict(row) for row in rows]
+    r_values = [float(t["result_r_multiple"]) for t in trades if t.get("result_r_multiple") is not None]
+    wins = [v for v in r_values if v > 0]
+    losses = [v for v in r_values if v < 0]
+    total = len(r_values)
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+
+    score_params = []
+    score_where = ""
+    if pair:
+        score_where = "WHERE pair = ?"
+        score_params.append(pair)
+    decision_rows = conn.execute(
+        f"""
+        SELECT combined_score, ai_score, multi_timeframe_score,
+               technical_score_h4, technical_score_d1, timeframe_alignment,
+               trade_allowed
+        FROM decisions
+        {score_where}
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        tuple(score_params + [limit]),
+    ).fetchall()
+    decisions = [dict(row) for row in decision_rows]
+    scores = [float(d["combined_score"]) for d in decisions if d.get("combined_score") is not None]
+    ai_impacts = [abs(float(d["ai_score"])) for d in decisions if d.get("ai_score") is not None]
+    h4d1 = []
+    aligned_allowed = 0
+    aligned_total = 0
+    for d in decisions:
+        if d.get("technical_score_h4") is not None and d.get("technical_score_d1") is not None:
+            h4d1.append(abs(float(d["technical_score_h4"])) + abs(float(d["technical_score_d1"])))
+        alignment = d.get("timeframe_alignment") or ""
+        if "aligned" in alignment:
+            aligned_total += 1
+            if d.get("trade_allowed"):
+                aligned_allowed += 1
+
+    metrics = {
+        "trade_count": total,
+        "winrate": round(len(wins) / total * 100, 2) if total else None,
+        "average_rr": round(sum(r_values) / total, 4) if total else None,
+        "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss else (None if not gross_profit else gross_profit),
+        "expectancy": round(sum(r_values) / total, 4) if total else None,
+        "max_drawdown": _max_drawdown(list(reversed(r_values))) if total else None,
+        "sharpe_ratio": _sharpe(r_values),
+        "average_score": round(sum(scores) / len(scores), 4) if scores else None,
+        "ai_impact": round(sum(ai_impacts) / len(ai_impacts), 4) if ai_impacts else None,
+        "h4_d1_impact": round(sum(h4d1) / len(h4d1), 4) if h4d1 else None,
+        "alignment_success_rate": round(aligned_allowed / aligned_total * 100, 2) if aligned_total else None,
+    }
+    return metrics
+
+
+def save_analytics_metrics(conn, pair=None, metrics=None):
+    metrics = metrics or calculate_analytics_metrics(conn, pair=pair)
+    conn.execute(
+        """
+        INSERT INTO analytics_metrics
+        (calculated_at, pair, winrate, average_rr, profit_factor, expectancy,
+         max_drawdown, sharpe_ratio, average_score, ai_impact, h4_d1_impact,
+         alignment_success_rate, metrics_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            utc_now(),
+            pair,
+            metrics.get("winrate"),
+            metrics.get("average_rr"),
+            metrics.get("profit_factor"),
+            metrics.get("expectancy"),
+            metrics.get("max_drawdown"),
+            metrics.get("sharpe_ratio"),
+            metrics.get("average_score"),
+            metrics.get("ai_impact"),
+            metrics.get("h4_d1_impact"),
+            metrics.get("alignment_success_rate"),
+            json.dumps(metrics, ensure_ascii=False),
+        ),
+    )
+    conn.commit()
+    return metrics

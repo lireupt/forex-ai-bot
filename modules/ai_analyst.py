@@ -21,18 +21,21 @@ def model_version_for_provider(provider):
 
 SYSTEM_PROMPT = """És um analista financeiro especializado em forex (mercado cambial).
 
-Recebes notícias e eventos económicos relevantes para um par de moedas. Pode também ser-te dado um snapshot técnico do gráfico (RSI, EMA, MACD, ATR, candles recentes). A tua tarefa é avaliar o sentimento e a direção provável do par, integrando fundamental e técnica, e devolver uma decisão estruturada.
+Recebes notícias e eventos económicos relevantes para um par de moedas. Pode também ser-te dado um snapshot técnico multi-timeframe. A tua tarefa é contextualizar o mercado macro/fundamental. A direção operacional pertence aos indicadores técnicos; tu NÃO és executor de trades.
 
 REGRAS OBRIGATÓRIAS:
 1. Respondes SEMPRE com um único objeto JSON válido, sem texto antes ou depois, sem markdown, sem ```json.
 2. O JSON deve conter EXACTAMENTE estes campos:
-   - "signal": uma de "BUY", "SELL", "NEUTRAL"
-   - "confidence": número inteiro de 0 a 100
-   - "reasoning": string em português explicando a tua análise (2-4 frases). Refere explicitamente os fundamentais E o que viste no técnico (se foi fornecido).
-   - "risk_level": uma de "LOW", "MEDIUM", "HIGH"
-   - "hold_off": booleano. Define como true APENAS quando há evento high-impact iminente, notícias contraditórias muito fortes, ou contradição clara entre fundamental e técnica. NÃO marques true só por incerteza geral.
-3. "confidence" deve refletir a tua certeza real — não inflaciones, mas também não desvalorizes sinais alinhados (notícias + técnica a apontar no mesmo sentido = confidence mais alta).
-4. Quando o snapshot técnico contradiz o sentimento das notícias, podes manter um sinal direccional mas baixar "confidence"; reserva NEUTRAL para quando não há sinal claro de nenhum dos lados."""
+   - "bias": uma de "BUY", "SELL", "NEUTRAL"
+   - "confidence_adjustment": número entre -0.25 e 0.25. Positivo reforça o bias; negativo enfraquece ou contraria o bias.
+   - "risk_adjustment": número entre -0.50 e 0.50. Negativo reduz risco; positivo aumenta ligeiramente risco.
+   - "macro_context": string curta, por exemplo "bullish_eur", "bullish_usd", "mixed", "neutral"
+   - "volatility_context": uma de "low", "medium", "high", "event_risk"
+   - "news_sentiment": uma de "positive", "negative", "mixed", "neutral"
+   - "reason": string em português explicando a leitura macro/sentimento em 1-3 frases.
+   - "hold_off": booleano. Define como true APENAS quando há evento high-impact iminente, notícia contraditória extrema, liquidez anormal ou risco macro perigoso.
+3. NÃO devolvas uma ordem de trade. O campo "bias" é contexto, não execução.
+4. Se o contexto for fraco ou contraditório, usa bias "NEUTRAL", confidence_adjustment perto de 0 e risk_adjustment negativo ou zero."""
 
 
 def _format_news(news):
@@ -124,6 +127,13 @@ def _fallback(provider, error_msg):
         "reasoning": f"Erro na análise: {error_msg}",
         "risk_level": "HIGH",
         "hold_off": True,
+        "bias": "NEUTRAL",
+        "confidence_adjustment": 0.0,
+        "risk_adjustment": -0.25,
+        "macro_context": "unknown",
+        "volatility_context": "event_risk",
+        "news_sentiment": "neutral",
+        "reason": f"Erro na análise contextual: {error_msg}",
         "provider": provider,
         "model_version": model_version_for_provider(provider),
     }
@@ -146,12 +156,63 @@ def _strip_json_fences(text):
     return text
 
 
-def _validate(result):
-    required = ("signal", "confidence", "reasoning", "risk_level", "hold_off")
+def _clamp_float(value, lo, hi, default=0.0):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(lo, min(hi, number))
+
+
+def _normalise_contextual(result):
+    if "bias" not in result and "signal" in result:
+        signal = result.get("signal", "NEUTRAL")
+        confidence = _clamp_float(result.get("confidence"), 0, 100, 0) / 100
+        result["bias"] = signal if signal in {"BUY", "SELL", "NEUTRAL"} else "NEUTRAL"
+        result["confidence_adjustment"] = round(confidence * 0.20, 4)
+        result["risk_adjustment"] = -0.15 if result.get("risk_level") == "HIGH" else 0.0
+        result["macro_context"] = "legacy_signal"
+        result["volatility_context"] = "medium"
+        result["news_sentiment"] = "neutral"
+        result["reason"] = result.get("reasoning", "")
+
+    required = (
+        "bias",
+        "confidence_adjustment",
+        "risk_adjustment",
+        "macro_context",
+        "volatility_context",
+        "news_sentiment",
+        "reason",
+        "hold_off",
+    )
     for field in required:
         if field not in result:
             raise ValueError(f"campo '{field}' em falta na resposta")
+
+    bias = str(result.get("bias") or "NEUTRAL").upper()
+    if bias not in {"BUY", "SELL", "NEUTRAL"}:
+        bias = "NEUTRAL"
+    result["bias"] = bias
+    result["confidence_adjustment"] = round(
+        _clamp_float(result.get("confidence_adjustment"), -0.25, 0.25), 4
+    )
+    result["risk_adjustment"] = round(
+        _clamp_float(result.get("risk_adjustment"), -0.50, 0.50), 4
+    )
+    result["hold_off"] = bool(result.get("hold_off"))
+    result["reason"] = str(result.get("reason") or "").strip()
+
+    # Campos legados preservados para cache, dashboard e testes existentes.
+    result.setdefault("signal", bias)
+    result.setdefault("confidence", int(round(abs(result["confidence_adjustment"]) * 100)))
+    result.setdefault("reasoning", result["reason"])
+    result.setdefault("risk_level", "HIGH" if result["risk_adjustment"] < -0.2 else "MEDIUM")
     return result
+
+
+def _validate(result):
+    return _normalise_contextual(result)
 
 
 def _analyse_groq(user_message):

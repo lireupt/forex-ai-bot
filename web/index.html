@@ -478,6 +478,18 @@
         return `<span class="${cls}">${v}</span>`;
       }
 
+      function signalFromScore(value) {
+        const n = Number(value);
+        if (Number.isNaN(n)) return "NEUTRAL";
+        if (n >= 0.35) return "BUY";
+        if (n <= -0.35) return "SELL";
+        return "NEUTRAL";
+      }
+
+      function scorePill(value) {
+        return `${pill(signalFromScore(value))} <span style="color:var(--muted);font-size:11px;">${fmtScore(value)}</span>`;
+      }
+
       function escapeHtml(value) {
         if (value === null || value === undefined) return "";
         return String(value)
@@ -569,8 +581,8 @@
             <tr>
               <td>${fmtTime(d.timestamp)}</td>
               <td>${fmt(d.pair, "—")} <span style="color:var(--muted)">${fmt(d.timeframe, "")}</span></td>
-              <td>${pill(d.ai_signal)} <span style="color:var(--muted);font-size:11px;">${fmtScore(d.ai_score)}</span></td>
-              <td>${pill(d.technical_signal)} <span style="color:var(--muted);font-size:11px;">${fmtScore(d.technical_score)}</span></td>
+              <td>${pill(d.ai_bias || d.ai_signal)} <span style="color:var(--muted);font-size:11px;">${fmtScore(d.ai_score)}</span></td>
+              <td>${scorePill(d.multi_timeframe_score ?? d.technical_score)}</td>
               <td>${pill(d.shadow_technical_signal)}</td>
               <td>${pill(d.combined_signal)} <span style="color:var(--muted);font-size:11px;">${fmtScore(d.combined_score)}</span></td>
               <td>${d.confidence ?? 0}%</td>
@@ -830,6 +842,13 @@
             <h4>Decisão IA</h4>
             ${buildKv([
               ["Sinal IA", `${pill(d.ai_signal)} ${scoreBar(d.ai_score)}`],
+              ["Bias IA", `${pill(d.ai_bias || d.ai_signal)} ${scoreBar(d.ai_score)}`],
+              ["Ajuste confiança IA", fmtScore(d.ai_confidence_adjustment)],
+              ["Ajuste risco IA", fmtScore(d.ai_risk_adjustment)],
+              ["Macro", escapeHtml(d.macro_context || "")],
+              ["Sentimento notícias", escapeHtml(d.news_sentiment || "")],
+              ["Volatilidade contexto", escapeHtml(d.volatility_context || "")],
+              ["Razão contextual", escapeHtml(d.ai_context_reason || "")],
               ["Score IA", fmtScore(d.ai_score)],
               ["Confiança IA", `${aiConfidence}% (score ${fmtScore(d.ai_confidence_score)})`],
               ["Modelo", escapeHtml(d.ai_model_version)],
@@ -845,7 +864,13 @@
           <section class="modal-section">
             <h4>Análise técnica</h4>
             ${buildKv([
-              ["Sinal técnico", `${pill(d.technical_signal)} ${scoreBar(d.technical_score)}`],
+              ["Multi-TF", `${pill(signalFromScore(d.multi_timeframe_score ?? d.technical_score))} ${scoreBar(d.multi_timeframe_score ?? d.technical_score)}`],
+              ["M15", `${pill(signalFromScore(d.technical_score_m15))} ${scoreBar(d.technical_score_m15)}`],
+              ["H1", `${pill(signalFromScore(d.technical_score_h1 ?? d.technical_score))} ${scoreBar(d.technical_score_h1 ?? d.technical_score)}`],
+              ["H4", `${pill(signalFromScore(d.technical_score_h4))} ${scoreBar(d.technical_score_h4)}`],
+              ["D1", `${pill(signalFromScore(d.technical_score_d1))} ${scoreBar(d.technical_score_d1)}`],
+              ["Alinhamento", escapeHtml(d.timeframe_alignment || "")],
+              ["Bloqueio timeframe", escapeHtml(d.timeframe_block_reason || "")],
               ["RSI", `${fmtNumber(d.rsi_value, 1)} (${escapeHtml(d.rsi_vote)})`],
               ["EMA", `EMA20=${fmtNumber(d.ema20_value, 5)} / EMA50=${fmtNumber(d.ema50_value, 5)} (${escapeHtml(d.ema_vote)})`],
               ["MACD", `MACD=${fmtNumber(d.macd_value, 5)} / signal=${fmtNumber(d.macd_signal_value, 5)} (${escapeHtml(d.macd_vote)})`],
@@ -872,6 +897,8 @@
               ["Sinal por score", pill(d.score_combined_signal || "NEUTRAL")],
               ["Modo de gating", `<span style="color:var(--muted);">${escapeHtml(d.gating_mode || "strict")}</span>`],
               ["Sinal de gating efectivo", `${pill(d.gating_signal || d.combined_signal)} (${d.gating_confidence ?? d.confidence ?? 0}%)`],
+              ["Modo operacional", escapeHtml(d.operational_mode || "")],
+              ["Janela operacional", d.operational_can_trade ? '<span class="pill allowed">permitida</span>' : `<span class="pill blocked">${escapeHtml(d.operational_block_reason || "bloqueada")}</span>`],
               ["Trade", d.trade_allowed ? '<span class="pill allowed">simulado</span>' : '<span class="pill blocked">bloqueado</span>'],
               ["Razão combinado", escapeHtml(d.combined_reason)],
               ["Bloqueio", escapeHtml(d.blocking_reason || d.block_reason || "")],

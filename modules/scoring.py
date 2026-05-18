@@ -6,11 +6,11 @@ permitindo análise mais fina sem alterar o gating real do bot.
 
 Limiares e pesos são configuráveis por env vars. Os nomes novos são usados no
 pipeline principal e os antigos SCORE_* continuam aceites por compatibilidade:
-    COMBINED_BUY_THRESHOLD    (default  0.45)
-    COMBINED_SELL_THRESHOLD   (default -0.45)
-    AI_WEIGHT                 (default  0.40)
-    TECHNICAL_WEIGHT          (default  0.50)
-    NEWS_WEIGHT               (default  0.10)
+    COMBINED_BUY_THRESHOLD    (default  0.35)
+    COMBINED_SELL_THRESHOLD   (default -0.35)
+    AI_WEIGHT                 (default  0.30)
+    TECHNICAL_WEIGHT          (default  0.55)
+    NEWS_WEIGHT               (default  0.15)
     SCORE_SHADOW_WEIGHT       (default  0.0)  # compat/shadow opcional
 """
 
@@ -21,11 +21,11 @@ DEFAULT_BUY_THRESHOLD = 0.35
 DEFAULT_SELL_THRESHOLD = -0.35
 DEFAULT_AI_WEIGHT = 0.6
 DEFAULT_TECHNICAL_WEIGHT = 0.4
-DEFAULT_COMBINED_BUY_THRESHOLD = 0.45
-DEFAULT_COMBINED_SELL_THRESHOLD = -0.45
-DEFAULT_COMBINED_AI_WEIGHT = 0.4
-DEFAULT_COMBINED_TECHNICAL_WEIGHT = 0.5
-DEFAULT_NEWS_WEIGHT = 0.1
+DEFAULT_COMBINED_BUY_THRESHOLD = 0.35
+DEFAULT_COMBINED_SELL_THRESHOLD = -0.35
+DEFAULT_COMBINED_AI_WEIGHT = 0.30
+DEFAULT_COMBINED_TECHNICAL_WEIGHT = 0.55
+DEFAULT_NEWS_WEIGHT = 0.15
 DEFAULT_SHADOW_WEIGHT = 0.0
 
 
