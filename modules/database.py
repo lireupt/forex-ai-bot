@@ -134,6 +134,7 @@ def init_db(conn):
             dangerous_event_nearby INTEGER,
             dangerous_event_reason TEXT,
             simulated_order_json TEXT,
+            decision_hash TEXT,
             created_at TEXT NOT NULL
         );
 
@@ -255,6 +256,8 @@ def _ensure_decisions_columns(conn):
         "shadow_combined_confidence": "INTEGER",
         "shadow_combined_reason": "TEXT",
         "decision_signature": "TEXT",
+        "decision_hash": "TEXT",
+        "is_duplicate": "INTEGER",
         "outcome_price_1h": "REAL",
         "outcome_price_4h": "REAL",
         "outcome_price_24h": "REAL",
@@ -621,6 +624,7 @@ def save_ai_analysis(conn, pair, analysis_date, input_hash, result):
 
 
 def save_decision(conn, entry):
+    decision_hash = entry.get("decision_hash") or entry.get("decision_signature")
     features_snapshot = entry.get("ai_features_snapshot")
     if isinstance(features_snapshot, (dict, list)):
         features_snapshot_json = json.dumps(features_snapshot, ensure_ascii=False)
@@ -645,6 +649,7 @@ def save_decision(conn, entry):
          technical_signal, ai_signal, combined_signal, confidence, hold_off,
          current_price, trade_allowed, block_reason, dangerous_event_nearby,
          dangerous_event_reason, simulated_order_json, decision_signature,
+         decision_hash, is_duplicate,
          stop_loss_pips_used, take_profit_pips_used, sl_tp_mode,
          ai_score, ai_confidence_score, ai_analysis_text, ai_reason, ai_features_snapshot,
          ai_model_version, ai_bias, ai_confidence_adjustment, ai_risk_adjustment,
@@ -656,7 +661,7 @@ def save_decision(conn, entry):
          gating_mode, gating_signal, gating_confidence, adx_value,
          gate_diagnostics_json, ai_status, neutral_reason, operational_mode,
          operational_can_trade, operational_block_reason, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             entry["timestamp"],
@@ -699,6 +704,8 @@ def save_decision(conn, entry):
             if entry.get("simulated_order") is not None
             else None,
             entry.get("decision_signature"),
+            decision_hash,
+            int(bool(entry.get("is_duplicate"))),
             entry.get("stop_loss_pips_used"),
             entry.get("take_profit_pips_used"),
             entry.get("sl_tp_mode"),
@@ -1021,7 +1028,7 @@ def get_paper_trades_summary(conn, source=None, direction=None):
 def get_last_decision_signature(conn, pair):
     row = conn.execute(
         """
-        SELECT decision_signature, timestamp
+        SELECT COALESCE(decision_signature, decision_hash) AS decision_signature, timestamp
         FROM decisions
         WHERE pair = ?
         ORDER BY id DESC

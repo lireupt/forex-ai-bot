@@ -1044,6 +1044,7 @@ def _build_decision_entry(
         "dangerous_event_nearby": trade_decision.get("dangerous_event_nearby"),
         "dangerous_event_reason": trade_decision.get("dangerous_event_reason"),
         "decision_signature": signature,
+        "decision_hash": signature,
         "stop_loss_pips_used": order.get("stop_loss_pips"),
         "take_profit_pips_used": order.get("take_profit_pips"),
         "sl_tp_mode": order.get("sl_tp_mode"),
@@ -1159,6 +1160,7 @@ def _print_run_summary(
     trade_decision,
     jsonl_saved,
     sqlite_saved,
+    is_duplicate=False,
     jsonl_error="",
     sqlite_error="",
 ):
@@ -1202,6 +1204,7 @@ def _print_run_summary(
     print("│  Logs:")
     print(f"│    JSONL saved:   {_yes_no(jsonl_saved)} {jsonl_error}")
     print(f"│    SQLite saved:  {_yes_no(sqlite_saved)} {sqlite_error}")
+    print(f"│    Duplicate:     {_yes_no(is_duplicate)}")
     print("└────────────────────────────────────────────")
 
 
@@ -1590,29 +1593,25 @@ def main():
         gating_confidence=gating_combined.get("confidence"),
         operational_state=op_state,
     )
+    decision_entry["is_duplicate"] = is_duplicate
 
-    if is_duplicate:
-        jsonl_saved, jsonl_error = False, f"duplicado de {last_signature}"
-        sqlite_saved, sqlite_error = False, f"duplicado de {last_signature}"
-        decision_id = None
-    else:
-        jsonl_saved, jsonl_error = _save_jsonl(decision_entry)
-        sqlite_saved, sqlite_error, decision_id = _save_sqlite_decision(conn, decision_entry)
-        paper_trade_id = _maybe_create_paper_trade(
-            conn,
-            decision_id=decision_id,
-            pair=PAIR,
-            timeframe=TIMEFRAME,
-            ai_result=ai_result,
-            combined=gating_combined,
-            current_price=current_price,
-            atr_pips=atr_pips,
-            created_at_dt=datetime.now(timezone.utc),
-            trade_decision=trade_decision,
-        )
-        if paper_trade_id is not None:
-            print(f"[paper-trade] criado #{paper_trade_id} ({decision_entry['ai_signal']}/"
-                  f"{decision_entry['combined_signal']})")
+    jsonl_saved, jsonl_error = _save_jsonl(decision_entry)
+    sqlite_saved, sqlite_error, decision_id = _save_sqlite_decision(conn, decision_entry)
+    paper_trade_id = _maybe_create_paper_trade(
+        conn,
+        decision_id=decision_id,
+        pair=PAIR,
+        timeframe=TIMEFRAME,
+        ai_result=ai_result,
+        combined=gating_combined,
+        current_price=current_price,
+        atr_pips=atr_pips,
+        created_at_dt=datetime.now(timezone.utc),
+        trade_decision=trade_decision,
+    )
+    if paper_trade_id is not None:
+        print(f"[paper-trade] criado #{paper_trade_id} ({decision_entry['ai_signal']}/"
+              f"{decision_entry['combined_signal']})")
 
     try:
         analytics = database.save_analytics_metrics(conn, pair=PAIR)
@@ -1644,6 +1643,7 @@ def main():
         trade_decision,
         jsonl_saved,
         sqlite_saved,
+        is_duplicate,
         jsonl_error,
         sqlite_error,
     )
