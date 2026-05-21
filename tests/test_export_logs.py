@@ -1,5 +1,7 @@
 """Testes para normalização do JSON público do dashboard."""
 
+import json
+
 from scripts import export_logs
 
 
@@ -33,3 +35,43 @@ class TestNormaliseAIObservability:
             "timestamp": "2026-05-06T19:00:00+00:00",
         })
         assert item["ai_analysis_text"] == export_logs.AI_ANALYSIS_UNAVAILABLE
+
+
+class TestNormaliseAdaptiveRisk:
+    def test_surfaces_adaptive_fields_from_gate_diagnostics(self):
+        item = export_logs._normalise({
+            "timestamp": "2026-05-21T09:00:00+00:00",
+            "gate_diagnostics_json": json.dumps({
+                "adaptive_risk": {
+                    "allow_trade": True,
+                    "adaptive_min_confidence": 0.41,
+                    "effective_confidence": 0.58,
+                    "raw_confidence": 0.36,
+                    "score_strength": 0.42,
+                    "risk_multiplier": 0.5,
+                    "dynamic_exposure": "small",
+                    "execution_reason": "adaptive_risk_allowed: confidence=0.58 >= threshold=0.41",
+                    "block_reason": None,
+                    "bonuses": [{"name": "mtf_alignment", "value": 0.05}],
+                    "penalties": [],
+                    "context_blocks": [],
+                }
+            }),
+        })
+        adaptive = item["adaptive_risk"]
+        assert adaptive["allow_trade"] is True
+        assert adaptive["risk_multiplier"] == 0.5
+        assert adaptive["effective_confidence"] == 0.58
+        assert adaptive["adaptive_min_confidence"] == 0.41
+        assert adaptive["dynamic_exposure"] == "small"
+        assert adaptive["execution_reason"].startswith("adaptive_risk_allowed")
+        assert adaptive["bonuses"][0]["name"] == "mtf_alignment"
+
+    def test_empty_adaptive_when_diagnostics_absent(self):
+        item = export_logs._normalise({"timestamp": "2026-05-21T09:00:00+00:00"})
+        adaptive = item["adaptive_risk"]
+        assert adaptive["risk_multiplier"] is None
+        assert adaptive["effective_confidence"] is None
+        assert adaptive["bonuses"] == []
+        assert adaptive["penalties"] == []
+        assert adaptive["context_blocks"] == []

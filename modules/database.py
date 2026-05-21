@@ -1216,6 +1216,21 @@ def get_recent_decisions(conn, limit=5):
     return _rows_to_dicts(rows)
 
 
+def get_recent_gating_decisions(conn, pair, limit=5):
+    rows = conn.execute(
+        """
+        SELECT timestamp, pair, combined_signal, gating_signal, gating_confidence,
+               trade_allowed, block_reason
+        FROM decisions
+        WHERE pair = ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (pair, limit),
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
 def get_recent_decision_quality(conn, limit=20):
     rows = conn.execute(
         """
