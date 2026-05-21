@@ -116,6 +116,7 @@ class TestSchema:
             "shadow_score", "combined_score",
             "combined_reason", "blocking_reason", "score_combined_signal", "paper_trade_id",
             "operational_mode", "operational_can_trade", "operational_block_reason",
+            "decision_hash", "is_duplicate",
         ]:
             assert col in cols, f"coluna {col} em falta"
 
@@ -179,8 +180,39 @@ class TestSaveDecision:
         assert row["operational_can_trade"] == 1
         assert row["score_combined_signal"] == "BUY"
         assert row["blocking_reason"] == "sinal combinado é NEUTRAL"
+        assert row["decision_hash"] == "abc123"
+        assert row["is_duplicate"] == 0
         # snapshot é guardado como JSON string
         assert '"close":' in row["ai_features_snapshot"]
+
+    def test_persists_duplicate_flag_without_skipping_insert(self, memory_db):
+        first_id = database.save_decision(
+            memory_db,
+            _make_decision_entry(decision_signature="same", decision_hash="same"),
+        )
+        second_id = database.save_decision(
+            memory_db,
+            _make_decision_entry(
+                timestamp="2026-05-06T19:01:00+00:00",
+                decision_signature="same",
+                decision_hash="same",
+                is_duplicate=True,
+            ),
+        )
+
+        rows = memory_db.execute(
+            """
+            SELECT id, timestamp, decision_hash, is_duplicate
+            FROM decisions
+            ORDER BY id ASC
+            """
+        ).fetchall()
+        assert [row["id"] for row in rows] == [first_id, second_id]
+        assert rows[0]["decision_hash"] == "same"
+        assert rows[0]["is_duplicate"] == 0
+        assert rows[1]["decision_hash"] == "same"
+        assert rows[1]["is_duplicate"] == 1
+        assert rows[0]["timestamp"] != rows[1]["timestamp"]
 
     def test_features_snapshot_passthrough_when_string(self, memory_db):
         entry = _make_decision_entry(ai_features_snapshot='{"already":"json"}')
