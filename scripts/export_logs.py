@@ -147,12 +147,37 @@ def _ai_analysis_text(row):
     return text or AI_ANALYSIS_UNAVAILABLE
 
 
+def _adaptive_risk(gate_diagnostics):
+    """Extrai os campos da AdaptiveRiskEngine para o topo do item exportado.
+
+    Para decisões NEUTRAL (bloqueadas antes do gate de execução) não existe
+    `adaptive_risk` nos diagnostics; devolvemos um objeto vazio coerente.
+    """
+    adaptive = (gate_diagnostics or {}).get("adaptive_risk") or {}
+    return {
+        "allow_trade": adaptive.get("allow_trade"),
+        "adaptive_min_confidence": adaptive.get("adaptive_min_confidence"),
+        "effective_confidence": adaptive.get("effective_confidence"),
+        "raw_confidence": adaptive.get("raw_confidence"),
+        "score_strength": adaptive.get("score_strength"),
+        "risk_multiplier": adaptive.get("risk_multiplier"),
+        "dynamic_exposure": adaptive.get("dynamic_exposure"),
+        "execution_reason": adaptive.get("execution_reason"),
+        "block_reason": adaptive.get("block_reason"),
+        "bonuses": adaptive.get("bonuses") or [],
+        "penalties": adaptive.get("penalties") or [],
+        "context_blocks": adaptive.get("context_blocks") or [],
+    }
+
+
 def _normalise(row, paper_trade_lookup=None):
     atr_pips = row.get("atr_pips")
     paper_trade = None
     paper_trade_id = row.get("paper_trade_id")
     if paper_trade_id and paper_trade_lookup:
         paper_trade = paper_trade_lookup.get(paper_trade_id)
+
+    gate_diagnostics = _parse_json_obj(row.get("gate_diagnostics_json") or row.get("gate_diagnostics"))
 
     return {
         "timestamp": row.get("timestamp") or "",
@@ -176,7 +201,8 @@ def _normalise(row, paper_trade_lookup=None):
         "volatility_level": _volatility_level(atr_pips),
         "dangerous_event_nearby": _coerce_bool(row.get("dangerous_event_nearby")),
         "dangerous_event_reason": row.get("dangerous_event_reason") or "",
-        "gate_diagnostics": _parse_json_obj(row.get("gate_diagnostics_json") or row.get("gate_diagnostics")),
+        "gate_diagnostics": gate_diagnostics,
+        "adaptive_risk": _adaptive_risk(gate_diagnostics),
         "ai_status": row.get("ai_status") or "ok",
         "neutral_reason": row.get("neutral_reason") or "",
         "ai_score": _coerce_float(row.get("ai_score")),

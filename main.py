@@ -1286,6 +1286,41 @@ def _cooldown_state(conn, pair, source, direction, now_dt=None):
     return state
 
 
+def _signal_persistence(conn, pair, direction, limit=5):
+    if direction not in ("BUY", "SELL"):
+        return 0
+    rows = database.get_recent_gating_decisions(conn, pair, limit=limit)
+    count = 1
+    for row in rows:
+        previous = row.get("gating_signal") or row.get("combined_signal") or "NEUTRAL"
+        if previous == direction:
+            count += 1
+            continue
+        break
+    return count
+
+
+def _recent_risk_performance(conn, pair, limit=30):
+    trades = database.get_paper_trades(conn, limit=limit, status=None, source="combined")
+    closed = [
+        trade for trade in trades
+        if trade.get("pair") == pair and trade.get("status") in ("win", "loss")
+    ]
+    loss_streak = 0
+    for trade in closed:
+        if trade.get("status") == "loss":
+            loss_streak += 1
+            continue
+        break
+    metrics = database.calculate_analytics_metrics(conn, pair=pair, limit=limit)
+    return {
+        "loss_streak": loss_streak,
+        "max_drawdown": metrics.get("max_drawdown"),
+        "winrate": metrics.get("winrate"),
+        "expectancy": metrics.get("expectancy"),
+    }
+
+
 def _print_signal_outcomes(outcomes):
     if not outcomes:
         return
@@ -1458,6 +1493,8 @@ def main():
         paper_source,
         gating_combined.get("signal"),
     )
+    signal_persistence = _signal_persistence(conn, PAIR, gating_combined.get("signal"))
+    risk_performance = _recent_risk_performance(conn, PAIR)
     gate_context = {
         "market": market_state,
         "cooldown": cooldown,
@@ -1466,16 +1503,22 @@ def main():
         "allow_buy": _env_bool("ALLOW_BUY", True),
         "allow_sell": _env_bool("ALLOW_SELL", False),
         "ai_status": ai_result.get("status", "ok"),
+        "ai_signal": ai_result.get("signal"),
+        "ai_confidence": ai_result.get("confidence"),
+        "ai_confidence_score": scoring.confidence_to_unit(ai_result.get("confidence")),
         "ai_bias": ai_result.get("bias", ai_result.get("signal")),
         "ai_risk_adjustment": ai_result.get("risk_adjustment", 0.0),
         "confidence_adjustment": confidence_adjustment,
         "confidence_adjustment_reasons": confidence_adjustment_reasons,
         "technical_score": technical_score_value,
+        "mtf_signal": technical_result.get("signal"),
         "multi_timeframe_score": technical_result.get("multi_timeframe_score"),
         "timeframe_alignment": technical_result.get("timeframe_alignment"),
         "timeframe_block_reason": technical_result.get("timeframe_block_reason"),
         "combined_score": combined_score_value,
         "neutral_reason": combined.get("neutral_reason"),
+        "signal_persistence": signal_persistence,
+        "performance": risk_performance,
     }
     trade_decision = evaluate_trade(
         PAIR,
