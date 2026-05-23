@@ -69,7 +69,17 @@ class TestMultiTimeframeAggregate:
 
 
 class TestFinalScoreWithMultiTimeframe:
-    def test_final_score_inside_neutral_zone(self):
+    _CONFIG = {
+        "buy_threshold": 0.35,
+        "sell_threshold": -0.35,
+        "technical_weight": 0.55,
+        "ai_weight": 0.30,
+        "news_weight": 0.15,
+        "shadow_weight": 0.0,
+    }
+
+    def test_final_score_inside_neutral_zone(self, monkeypatch):
+        monkeypatch.setenv("AI_VOTE_MIN_CONFIDENCE", "35")
         technical_result = {
             "signal": "NEUTRAL",
             "confidence": 0,
@@ -77,24 +87,19 @@ class TestFinalScoreWithMultiTimeframe:
             "multi_timeframe_score": 0.2,
         }
         ai_result = {"signal": "NEUTRAL", "confidence": 0, "hold_off": False}
-        config = {
-            "buy_threshold": 0.35,
-            "sell_threshold": -0.35,
-            "technical_weight": 0.55,
-            "ai_weight": 0.30,
-            "news_weight": 0.15,
-            "shadow_weight": 0.0,
-        }
         result = main._combine_signals(
             ai_result,
             technical_result,
-            scoring_config=config,
+            scoring_config=self._CONFIG,
             news_score=0.0,
         )
-        assert result["combined_score"] == pytest.approx(0.11)
+        # IA sem convicção (conf 0) abstém-se; a técnica 0.2 fica como combinado
+        # e continua dentro da zona neutra.
+        assert result["combined_score"] == pytest.approx(0.2)
         assert result["signal"] == "NEUTRAL"
 
-    def test_ai_bullish_with_technical_bullish_reinforces_score(self):
+    def test_confident_ai_aligned_reinforces_score(self, monkeypatch):
+        monkeypatch.setenv("AI_VOTE_MIN_CONFIDENCE", "35")
         technical_result = {
             "signal": "BUY",
             "confidence": 60,
@@ -106,26 +111,41 @@ class TestFinalScoreWithMultiTimeframe:
             "confidence_adjustment": 0.12,
             "risk_adjustment": -0.05,
             "signal": "BUY",
-            "confidence": 12,
+            "confidence": 70,
             "hold_off": False,
         }
         result = main._combine_signals(
             ai_result,
             technical_result,
-            scoring_config={
-                "buy_threshold": 0.35,
-                "sell_threshold": -0.35,
-                "technical_weight": 0.55,
-                "ai_weight": 0.30,
-                "news_weight": 0.15,
-                "shadow_weight": 0.0,
-            },
+            scoring_config=self._CONFIG,
         )
+        # IA confiante (70%) participa: (0.12*0.30 + 0.5*0.55) / 0.85 = 0.3659.
         assert result["components"]["ai_score"] == pytest.approx(0.12)
-        assert result["combined_score"] == pytest.approx(0.311)
-        assert result["signal"] == "NEUTRAL"
+        assert result["combined_score"] == pytest.approx(0.3659)
+        assert result["signal"] == "BUY"
 
-    def test_ai_bullish_with_technical_bearish_does_not_replace_technical(self):
+    def test_low_confidence_ai_does_not_neutralise_clean_technical(self, monkeypatch):
+        # Reproduz o caso de produção: técnica SELL -0.43 que antes era puxada
+        # para -0.22 (NEUTRAL) por uma IA a 5%. Agora a IA abstém-se.
+        monkeypatch.setenv("AI_VOTE_MIN_CONFIDENCE", "35")
+        technical_result = {
+            "signal": "SELL",
+            "confidence": 43,
+            "indicators": {"technical_score": -0.43},
+            "multi_timeframe_score": -0.43,
+        }
+        ai_result = {"bias": "SELL", "signal": "SELL", "confidence": 5, "hold_off": False}
+        result = main._combine_signals(
+            ai_result,
+            technical_result,
+            scoring_config=self._CONFIG,
+            news_score=0.0,
+        )
+        assert result["combined_score"] == pytest.approx(-0.43)
+        assert result["signal"] == "SELL"
+
+    def test_ai_bullish_with_technical_bearish_does_not_replace_technical(self, monkeypatch):
+        monkeypatch.setenv("AI_VOTE_MIN_CONFIDENCE", "35")
         technical_result = {
             "signal": "SELL",
             "confidence": 60,
@@ -143,17 +163,11 @@ class TestFinalScoreWithMultiTimeframe:
         result = main._combine_signals(
             ai_result,
             technical_result,
-            scoring_config={
-                "buy_threshold": 0.35,
-                "sell_threshold": -0.35,
-                "technical_weight": 0.55,
-                "ai_weight": 0.30,
-                "news_weight": 0.15,
-                "shadow_weight": 0.0,
-            },
+            scoring_config=self._CONFIG,
         )
-        assert result["combined_score"] == pytest.approx(-0.349)
-        assert result["signal"] == "NEUTRAL"
+        # IA contrária mas de baixa convicção (12%) abstém-se: SELL técnico intacto.
+        assert result["combined_score"] == pytest.approx(-0.7)
+        assert result["signal"] == "SELL"
 
 
 class TestConfidenceAdjustments:

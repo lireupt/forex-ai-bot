@@ -65,6 +65,16 @@ def _env_int(name, default):
     return int(value)
 
 
+def _env_float(name, default):
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 def _has_internet_connection(timeout=3):
     last_error = ""
     for host, port in INTERNET_CHECK_TARGETS:
@@ -384,6 +394,23 @@ def _ai_context_score(ai_result):
     return round(_direction_score(bias) * adjustment, 4)
 
 
+def _ai_abstains(ai_result):
+    """A IA abstém-se do score combinado quando tem baixa convicção.
+
+    Uma IA com confiança muito baixa (ex.: 5%) não deve diluir um sinal
+    técnico limpo. Quando abstém, o peso da IA é retirado do `combine_scores`
+    (renormalizado para a técnica) em vez de puxar o combinado para a zona
+    neutra. Threshold em escala 0-100 via AI_VOTE_MIN_CONFIDENCE (default 35).
+    """
+    if (ai_result.get("status") or "").lower() == "failed":
+        return True
+    try:
+        conf = float(ai_result.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    return conf < _env_float("AI_VOTE_MIN_CONFIDENCE", 35.0)
+
+
 def _decision_confidence_adjustment(technical_result):
     alignment = technical_result.get("timeframe_alignment") or ""
     adjustment = 0.0
@@ -423,6 +450,7 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
     scoring_config = scoring_config or scoring.load_scoring_config()
     indicators = technical_result.get("indicators", {})
     ai_score = _ai_context_score(ai_result)
+    ai_score_for_combine = None if _ai_abstains(ai_result) else ai_score
     technical_score = indicators.get("technical_score")
     if technical_score is None:
         technical_score = scoring.technical_votes_score(
@@ -431,9 +459,9 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
             indicators.get("macd_vote", indicators.get("macd_signal", "neutral")),
         )
     combined_score = scoring.combine_scores(
-        ai_score,
+        ai_score_for_combine,
         technical_score,
-        news_score=news_score,
+        news_score=news_score or None,
         config=scoring_config,
     )
     signal = scoring.score_to_signal(combined_score, scoring_config)
@@ -1464,10 +1492,11 @@ def main():
         technical_result.get("shadow_technical_signal"),
         technical_result.get("shadow_technical_confidence"),
     )
+    ai_voted = not _ai_abstains(ai_result)
     combined_score_value = scoring.combine_scores(
-        ai_score_value, technical_score_value,
+        ai_score_value if ai_voted else None, technical_score_value,
         shadow_score=shadow_score_value,
-        news_score=0.0,
+        news_score=None,
         config=scoring_config,
     )
     score_signal_value = scoring.score_to_signal(combined_score_value, scoring_config)
@@ -1539,7 +1568,8 @@ def main():
         f"({shadow_combined['confidence']}%) — {shadow_combined['reason']}"
     )
     print(
-        f"Score: AI={ai_score_value:+.2f} tech={technical_score_value:+.2f} "
+        f"Score: AI={ai_score_value:+.2f}{'' if ai_voted else ' (abstém)'} "
+        f"tech={technical_score_value:+.2f} "
         f"shadow={shadow_score_value:+.2f} combined={combined_score_value:+.2f} "
         f"-> {score_signal_value}"
     )
