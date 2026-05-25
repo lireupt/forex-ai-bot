@@ -240,36 +240,35 @@ http://SERVER_IP
 
 ## 12. Configurar cron
 
+O bot precisa de **apenas dois** jobs. O `main.py` já busca candles e notícias
+internamente, por isso não há scripts de fetch separados. O `run_cycle.sh` corre
+o ciclo completo (decisão → avaliar paper trades → gates → export) **e copia o
+`web/data.json` para o web root que o nginx serve** — esse passo de cópia é
+obrigatório: sem ele o dashboard fica congelado, porque o `export_logs.py` só
+escreve em `/root/forex-ai-bot/web/` e o nginx serve de `/var/www/forex-bot`.
+
 ```bash
 crontab -e
 ```
 
-Cron hourly:
-
 ```cron
-5 * * * * cd /root/forex-ai-bot && /root/forex-ai-bot/venv/bin/python main.py >> logs/cron.log 2>&1
+SHELL=/bin/bash
+PATH=/root/forex-ai-bot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# ciclo + deploy do dashboard, ao minuto 5 de cada hora
+5 * * * * cd /root/forex-ai-bot && scripts/run_cycle.sh >> logs/cron.log 2>&1
+
+# limpar logs com mais de 30 dias
+30 3 * * * find /root/forex-ai-bot/logs -type f -name "*.log" -mtime +30 -delete
 ```
 
-Isto corre o bot todas as horas ao minuto 5, 24h/dia.
+Corre 24h/dia: ao fim-de-semana o `main.py` regista o mercado como fechado, mas
+o `generated_at` do dashboard continua a avançar (não parece morto). Se preferir
+correr só em dias úteis, troque `5 * * * *` por `5 * * * 1-5`.
 
-Se for desejado apenas segunda a sexta:
-
-```cron
-5 * * * 1-5 cd /root/forex-ai-bot && /root/forex-ai-bot/venv/bin/python main.py >> logs/cron.log 2>&1
-```
-
-Se for desejado apenas durante horas de trading ativas:
-
-```cron
-5 7-21 * * 1-5 cd /root/forex-ai-bot && /root/forex-ai-bot/venv/bin/python main.py >> logs/cron.log 2>&1
-```
-
-Cron completo com avaliação de paper trades, validation gates e export do
-dashboard:
-
-```cron
-5 * * * 1-5 cd /root/forex-ai-bot && /root/forex-ai-bot/venv/bin/python main.py && /root/forex-ai-bot/venv/bin/python scripts/evaluate_paper_trades.py && /root/forex-ai-bot/venv/bin/python scripts/check_gates.py --quiet && /root/forex-ai-bot/venv/bin/python scripts/export_logs.py >> logs/cron.log 2>&1
-```
+> Nota: o `reset_and_bootstrap.sh` **arquiva a DB** e serve só para reiniciar o
+> ciclo do zero — nunca o use em cron recorrente. Para o ciclo recorrente use
+> sempre `scripts/run_cycle.sh`.
 
 ## 13. Confirmar cron
 
