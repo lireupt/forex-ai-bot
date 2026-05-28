@@ -27,10 +27,10 @@ from scripts.export_logs import export as export_web_data
 load_dotenv()
 
 PAIR = "EUR/USD"
-TIMEFRAME = "1h"
+TIMEFRAME = os.getenv("TIMEFRAME") or "1h"
 TIMEFRAMES = {
     "m15": "15m",
-    "h1": "1h",
+    "h1": TIMEFRAME,
     "h4": "4h",
     "d1": "1d",
 }
@@ -1270,11 +1270,21 @@ def _is_recent_duplicate(current_sig, last_sig, last_timestamp, window_minutes):
 def _cooldown_state(conn, pair, source, direction, now_dt=None):
     enabled = _env_bool("COOLDOWN_ENABLED", True)
     now_dt = now_dt or datetime.now(timezone.utc)
+    if now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=timezone.utc)
+    now_dt = now_dt.astimezone(timezone.utc)
+    max_per_day = _env_int(
+        "MAX_DIRECTION_SIGNALS_PER_DAY",
+        _env_int("MAX_SIGNALS_PER_DIRECTION", 1),
+    )
     config = {
         "enabled": enabled,
-        "after_trade_hours": _env_int("COOLDOWN_AFTER_TRADE_HOURS", 2),
+        "cooldown_minutes": _env_int(
+            "COOLDOWN_MINUTES",
+            _env_int("COOLDOWN_AFTER_TRADE_HOURS", 2) * 60,
+        ),
         "after_loss_hours": _env_int("COOLDOWN_AFTER_LOSS_HOURS", 3),
-        "max_signals_per_direction": _env_int("MAX_SIGNALS_PER_DIRECTION", 1),
+        "max_direction_signals_per_day": max_per_day,
         "source": source,
         "direction": direction,
     }
@@ -1287,14 +1297,24 @@ def _cooldown_state(conn, pair, source, direction, now_dt=None):
     if not enabled or direction not in ("BUY", "SELL"):
         return state
 
-    since_trade = (now_dt - timedelta(hours=config["after_trade_hours"])).isoformat()
-    recent_same_direction = database.get_recent_paper_trades_for_direction(
-        conn, pair, source, direction, since_trade
+    since_cooldown = (now_dt - timedelta(minutes=config["cooldown_minutes"])).isoformat()
+    recent_cooldown = database.get_recent_paper_trades_for_direction(
+        conn, pair, source, direction, since_cooldown
     )
-    if len(recent_same_direction) >= config["max_signals_per_direction"]:
+    if recent_cooldown:
+        state["cooldown_active"] = True
+        state["reason"] = "cooldown_active"
+        state["recent_same_direction_count"] = len(recent_cooldown)
+        return state
+
+    day_start = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    today_same_direction = database.get_recent_paper_trades_for_direction(
+        conn, pair, source, direction, day_start
+    )
+    if len(today_same_direction) >= config["max_direction_signals_per_day"]:
         state["max_direction_signals_reached"] = True
         state["reason"] = "max_direction_signals_reached"
-        state["recent_same_direction_count"] = len(recent_same_direction)
+        state["today_same_direction_count"] = len(today_same_direction)
         return state
 
     last_closed = database.get_last_closed_paper_trade(conn, pair, source=source)

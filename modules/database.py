@@ -1307,6 +1307,120 @@ def get_recent_decision_quality(conn, limit=20):
     }
 
 
+def get_calibration_summary(conn, since_iso=None, pair=None):
+    decision_params = []
+    decision_where = []
+    if since_iso:
+        decision_where.append("timestamp >= ?")
+        decision_params.append(since_iso)
+    if pair:
+        decision_where.append("pair = ?")
+        decision_params.append(pair)
+    decision_clause = "WHERE " + " AND ".join(decision_where) if decision_where else ""
+    decision_rows = conn.execute(
+        f"""
+        SELECT id, timestamp, pair, trade_allowed, block_reason, blocking_reason,
+               confidence, gating_confidence, gating_signal, combined_signal
+        FROM decisions
+        {decision_clause}
+        ORDER BY id ASC
+        """,
+        tuple(decision_params),
+    ).fetchall()
+    decisions = _rows_to_dicts(decision_rows)
+
+    total_decisions = len(decisions)
+    total_executed = sum(1 for row in decisions if row.get("trade_allowed"))
+    total_blocked = total_decisions - total_executed
+    blocked_by_reason = {}
+    executed_confidences = []
+    all_confidences = []
+
+    for row in decisions:
+        confidence = row.get("gating_confidence")
+        if confidence is None:
+            confidence = row.get("confidence")
+        if confidence is not None:
+            all_confidences.append(float(confidence))
+        if row.get("trade_allowed") and confidence is not None:
+            executed_confidences.append(float(confidence))
+        if not row.get("trade_allowed"):
+            reason = row.get("blocking_reason") or row.get("block_reason") or "unknown"
+            blocked_by_reason[reason] = blocked_by_reason.get(reason, 0) + 1
+
+    trade_params = []
+    trade_where = []
+    if since_iso:
+        trade_where.append("created_at >= ?")
+        trade_params.append(since_iso)
+    if pair:
+        trade_where.append("pair = ?")
+        trade_params.append(pair)
+    trade_clause = "WHERE " + " AND ".join(trade_where) if trade_where else ""
+    trade_rows = conn.execute(
+        f"""
+        SELECT direction, status, result_pips, result_r_multiple
+        FROM paper_trades
+        {trade_clause}
+        ORDER BY id ASC
+        """,
+        tuple(trade_params),
+    ).fetchall()
+    trades = _rows_to_dicts(trade_rows)
+    wins = sum(1 for trade in trades if trade.get("status") == "win")
+    losses = sum(1 for trade in trades if trade.get("status") == "loss")
+    closed = wins + losses
+    pips = [
+        float(trade["result_pips"])
+        for trade in trades
+        if trade.get("result_pips") is not None
+    ]
+    gross_profit = sum(value for value in pips if value > 0)
+    gross_loss = abs(sum(value for value in pips if value < 0))
+    buy_pips = [
+        float(trade["result_pips"])
+        for trade in trades
+        if trade.get("direction") == "BUY" and trade.get("result_pips") is not None
+    ]
+    sell_pips = [
+        float(trade["result_pips"])
+        for trade in trades
+        if trade.get("direction") == "SELL" and trade.get("result_pips") is not None
+    ]
+    buy_total = sum(1 for trade in trades if trade.get("direction") == "BUY")
+    sell_total = sum(1 for trade in trades if trade.get("direction") == "SELL")
+    buy_net = round(sum(buy_pips), 1) if buy_pips else 0.0
+    sell_net = round(sum(sell_pips), 1) if sell_pips else 0.0
+    if buy_net == sell_net:
+        best_direction = None
+    else:
+        best_direction = "BUY" if buy_net > sell_net else "SELL"
+
+    return {
+        "total_decisions": total_decisions,
+        "total_blocked": total_blocked,
+        "total_executed": total_executed,
+        "block_rate": round(total_blocked / total_decisions * 100, 1) if total_decisions else None,
+        "blocked_by_reason": dict(sorted(blocked_by_reason.items(), key=lambda item: (-item[1], item[0]))),
+        "top_block_reason": max(blocked_by_reason.items(), key=lambda item: item[1])[0] if blocked_by_reason else None,
+        "wins": wins,
+        "losses": losses,
+        "winrate": round(wins / closed * 100, 1) if closed else None,
+        "avg_confidence": round(sum(executed_confidences) / len(executed_confidences), 1)
+        if executed_confidences
+        else (round(sum(all_confidences) / len(all_confidences), 1) if all_confidences else None),
+        "avg_pips": round(sum(pips) / len(pips), 1) if pips else None,
+        "buy_vs_sell": {"BUY": buy_total, "SELL": sell_total},
+        "net_pips": round(sum(pips), 1) if pips else 0.0,
+        "profit_factor": round(gross_profit / gross_loss, 2)
+        if gross_loss
+        else (999.0 if gross_profit > 0 else None),
+        "expectancy": round(sum(pips) / closed, 1) if closed and pips else None,
+        "best_direction": best_direction,
+        "direction_net_pips": {"BUY": buy_net, "SELL": sell_net},
+    }
+
+
 def _max_drawdown(values):
     equity = 0.0
     peak = 0.0

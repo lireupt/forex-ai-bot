@@ -10,9 +10,18 @@ def test_trade_window_allowed():
 
 
 def test_outside_trade_window_blocked():
-    state = operational_state(datetime(2026, 5, 18, 9, 0), mode="trade")
+    state = operational_state(datetime(2026, 5, 18, 16, 0), mode="trade")
     assert state["can_open_trade"] is False
     assert state["block_reason"] == "outside_operational_trade_window"
+
+
+def test_env_trade_window(monkeypatch):
+    monkeypatch.setenv("OPERATIONAL_TRADE_START_HOUR", "9")
+    monkeypatch.setenv("OPERATIONAL_TRADE_END_HOUR", "11")
+    assert operational_state(datetime(2026, 5, 18, 8, 59), mode="trade")["can_open_trade"] is False
+    assert operational_state(datetime(2026, 5, 18, 9, 0), mode="trade")["can_open_trade"] is True
+    assert operational_state(datetime(2026, 5, 18, 10, 59), mode="trade")["can_open_trade"] is True
+    assert operational_state(datetime(2026, 5, 18, 11, 0), mode="trade")["can_open_trade"] is False
 
 
 def test_analysis_mode_never_opens_trade():

@@ -345,6 +345,55 @@ class TestPaperTrades:
         assert comb_summary["wins"] == 0
         assert comb_summary["losses"] == 1
 
+    def test_calibration_summary_tracks_blocks_and_pips(self, memory_db):
+        blocked_id = database.save_decision(
+            memory_db,
+            _make_decision_entry(
+                trade_allowed=False,
+                block_reason="outside_operational_trade_window",
+                blocking_reason="outside_operational_trade_window",
+                gating_confidence=40,
+            ),
+        )
+        executed_id = database.save_decision(
+            memory_db,
+            _make_decision_entry(
+                decision_signature="def456",
+                trade_allowed=True,
+                block_reason=None,
+                blocking_reason="",
+                combined_signal="BUY",
+                gating_signal="BUY",
+                gating_confidence=62,
+            ),
+        )
+        assert blocked_id
+        win_id = database.create_paper_trade(
+            memory_db,
+            _make_paper_trade(executed_id, source="combined", direction="BUY", status="win"),
+        )
+        loss_id = database.create_paper_trade(
+            memory_db,
+            _make_paper_trade(executed_id, source="combined", direction="SELL", status="loss"),
+        )
+        database.update_paper_trade_result(memory_db, win_id, "win", 1.18, "x", "x", 20.0, 2.0)
+        database.update_paper_trade_result(memory_db, loss_id, "loss", 1.17, "x", "x", -10.0, -1.0)
+
+        summary = database.get_calibration_summary(memory_db)
+
+        assert summary["total_decisions"] == 2
+        assert summary["total_blocked"] == 1
+        assert summary["total_executed"] == 1
+        assert summary["blocked_by_reason"]["outside_operational_trade_window"] == 1
+        assert summary["wins"] == 1
+        assert summary["losses"] == 1
+        assert summary["winrate"] == 50.0
+        assert summary["avg_confidence"] == 62.0
+        assert summary["net_pips"] == 10.0
+        assert summary["profit_factor"] == 2.0
+        assert summary["expectancy"] == 5.0
+        assert summary["best_direction"] == "BUY"
+
 
 class TestMarketCandles:
     def test_get_between_returns_in_range(self, memory_db):

@@ -18,11 +18,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 DB_PATH = ROOT / "data" / "forex_bot.db"
 JSONL_PATH = ROOT / "logs" / "decisions.jsonl"
 GATES_PATH = ROOT / "data" / "gates_check.json"
 DEFAULT_OUT = ROOT / "web" / "data.json"
 DEFAULT_LIMIT = 50
+
+from modules import database  # noqa: E402
 
 
 def _volatility_level(atr_pips):
@@ -571,6 +575,20 @@ def _read_gate_history_from_sqlite(limit=20):
     return [dict(row) for row in rows]
 
 
+def _read_calibration_summary():
+    if not DB_PATH.exists():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            return database.get_calibration_summary(conn)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+
+
 def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -587,12 +605,14 @@ def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
     paper_trade_summary = _summarise_paper_trades(paper_trades)
     gates_snapshot = _read_gates_snapshot()
     gates_history = _read_gate_history_from_sqlite(limit=20)
+    calibration = _read_calibration_summary() if source == "sqlite" else {}
 
     payload = {
         "summary": summary,
         "decisions": items,
         "paper_trades": paper_trades,
         "paper_trade_summary": paper_trade_summary,
+        "calibration": calibration,
         "gates_check": gates_snapshot,
         "gates_history": gates_history,
     }

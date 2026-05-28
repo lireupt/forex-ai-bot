@@ -130,6 +130,7 @@ def test_neutral_combined_stays_blocked_without_engine(monkeypatch):
 
 def test_minimal_directional_signal_opens_with_reduced_size(monkeypatch):
     monkeypatch.setenv("ALLOW_SELL", "true")
+    monkeypatch.setenv("MIN_CONFIDENCE_TO_TRADE", "0.45")
     result = evaluate_trade(
         "EUR/USD",
         {
@@ -158,3 +159,30 @@ def test_minimal_directional_signal_opens_with_reduced_size(monkeypatch):
     order = result["simulated_order"]
     assert 0.0 < order["risk_multiplier"] < 1.0
     assert order["risk_percent"] < order["base_risk_percent"]
+
+
+def test_confidence_below_calibration_threshold_blocks(monkeypatch):
+    monkeypatch.setenv("ALLOW_SELL", "true")
+    monkeypatch.setenv("MIN_CONFIDENCE_TO_TRADE", "0.55")
+    result = evaluate_trade(
+        "EUR/USD",
+        {
+            "signal": "SELL",
+            "confidence": 36,
+            "hold_off": False,
+            "combined_score": -0.36,
+            "reasoning": "score SELL no limiar direcional",
+        },
+        1.17000,
+        event_risk={"dangerous_event_nearby": False, "dangerous_event_reason": ""},
+        atr_pips=14.0,
+        gate_context={
+            "combined_score": -0.36,
+            "market": {"is_open": True},
+            "operational": {"can_open_trade": True},
+            "cooldown": {},
+        },
+    )
+
+    assert result["trade_allowed"] is False
+    assert result["block_reason"] == "confidence_below_threshold"

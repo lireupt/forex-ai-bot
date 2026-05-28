@@ -118,10 +118,7 @@ class AdaptiveRiskEngine:
                 f">= threshold={threshold['value']:.2f}, risk_multiplier={risk_multiplier:.2f}"
             )
         else:
-            reason = (
-                f"adaptive_confidence_below_threshold: confidence={effective_confidence['value']:.2f} "
-                f"< threshold={threshold['value']:.2f}"
-            )
+            reason = "confidence_below_threshold"
 
         return {
             "allow_trade": allow_trade,
@@ -210,7 +207,13 @@ class AdaptiveRiskEngine:
         technical_indicators,
         gate_context,
     ):
-        value = _as_float(self.config.get("adaptive_base_min_confidence"), 0.45)
+        value = _as_float(
+            self.config.get(
+                "min_confidence_to_trade",
+                self.config.get("adaptive_base_min_confidence"),
+            ),
+            0.55,
+        )
         bonuses = []
         penalties = []
 
