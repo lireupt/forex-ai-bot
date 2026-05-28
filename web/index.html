@@ -376,6 +376,11 @@
     <div class="cards" id="cards"></div>
 
     <section class="table-wrap">
+      <h2>Calibração</h2>
+      <div class="cards" id="calibration-cards" style="margin: 12px 16px 4px 16px;"></div>
+    </section>
+
+    <section class="table-wrap">
       <h2>
         Decisões recentes
       </h2>
@@ -556,6 +561,32 @@
             return `<div class="card"><div class="label">${c.label}</div><div class="value${accent}">${c.value}</div>${sub}</div>`;
           })
           .join("");
+      }
+
+      function renderCalibration(calibration) {
+        if (!calibration || Object.keys(calibration).length === 0) {
+          $("calibration-cards").innerHTML = '<div class="empty">Sem dados de calibração ainda.</div>';
+          return;
+        }
+        const cards = [
+          { label: "Taxa de bloqueio", value: calibration.block_rate != null ? `${calibration.block_rate}%` : "—",
+            sub: `${calibration.total_blocked ?? 0} de ${calibration.total_decisions ?? 0}` },
+          { label: "Principal motivo", value: escapeHtml(calibration.top_block_reason || "—") },
+          { label: "Trades simulados", value: calibration.total_executed ?? 0 },
+          { label: "Winrate", value: calibration.winrate != null ? `${calibration.winrate}%` : "—",
+            sub: `W/L ${calibration.wins ?? 0}/${calibration.losses ?? 0}` },
+          { label: "Net pips", value: calibration.net_pips != null ? fmtNumber(calibration.net_pips, 1) : "—",
+            accent: (calibration.net_pips ?? 0) >= 0 ? "accent-buy" : "accent-sell" },
+          { label: "Melhor direção", value: calibration.best_direction || "—",
+            sub: `BUY ${fmtNumber((calibration.direction_net_pips || {}).BUY, 1)} / SELL ${fmtNumber((calibration.direction_net_pips || {}).SELL, 1)}` },
+          { label: "Confiança média", value: calibration.avg_confidence != null ? `${calibration.avg_confidence}%` : "—",
+            sub: "trades executados" },
+        ];
+        $("calibration-cards").innerHTML = cards.map((c) => {
+          const sub = c.sub ? `<div class="sub">${c.sub}</div>` : "";
+          const accent = c.accent ? ` ${c.accent}` : "";
+          return `<div class="card"><div class="label">${c.label}</div><div class="value${accent}">${c.value}</div>${sub}</div>`;
+        }).join("");
       }
 
       function renderTable(decisions) {
@@ -962,6 +993,7 @@
           const decisions = Array.isArray(payload.decisions) ? payload.decisions : [];
           const paperTrades = Array.isArray(payload.paper_trades) ? payload.paper_trades : [];
           const paperSummary = payload.paper_trade_summary || { all: {} };
+          const calibration = payload.calibration || {};
           const gatesSnapshot = payload.gates_check || null;
           const gatesHistory = Array.isArray(payload.gates_history) ? payload.gates_history : [];
 
@@ -970,6 +1002,7 @@
           lastPaperSummary = paperSummary;
 
           renderCards(summary);
+          renderCalibration(calibration);
           renderTable(decisions);
           applyPaperFilter(paperFilter);
           renderGates(gatesSnapshot, gatesHistory);

@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
 def _isolate_env(monkeypatch):
     """Isola env vars relevantes para cada teste — evita herdar .env."""
     keys = [
-        "AI_PROVIDER", "GROQ_API_KEY", "ANTHROPIC_API_KEY",
+        "AI_PROVIDER", "GROQ_API_KEY", "ANTHROPIC_API_KEY", "TIMEFRAME",
         "DRY_RUN", "MIN_CONFIDENCE", "ACCOUNT_BALANCE",
         "ADAPTIVE_BASE_MIN_CONFIDENCE", "ADAPTIVE_MIN_FLOOR",
         "ADAPTIVE_MIN_CEILING", "MAX_SPREAD_PIPS", "ATR_EXTREME_PIPS",
@@ -39,6 +39,9 @@ def _isolate_env(monkeypatch):
         "GATE_MIN_WIN_RATE", "GATE_MAX_STREAK_LOSSES",
         "GATE_MAX_DRAWDOWN_PCT",
         "BOT_MODE", "TRADE_WINDOW_TOLERANCE_MINUTES",
+        "OPERATIONAL_TRADE_START_HOUR", "OPERATIONAL_TRADE_END_HOUR",
+        "COOLDOWN_MINUTES", "MAX_DIRECTION_SIGNALS_PER_DAY",
+        "MIN_CONFIDENCE_TO_TRADE",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)

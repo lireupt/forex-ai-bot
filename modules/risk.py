@@ -21,6 +21,7 @@ DEFAULT_SELL_MAX_RSI = 45.0
 DEFAULT_ADAPTIVE_BASE_MIN_CONFIDENCE = 0.45
 DEFAULT_ADAPTIVE_MIN_FLOOR = 0.35
 DEFAULT_ADAPTIVE_MIN_CEILING = 0.65
+DEFAULT_MIN_CONFIDENCE_TO_TRADE = 0.55
 DEFAULT_MAX_SPREAD_PIPS = 2.5
 DEFAULT_ATR_EXTREME_PIPS = 35.0
 
@@ -46,6 +47,10 @@ def load_risk_config():
         "adaptive_base_min_confidence": _env_float(
             "ADAPTIVE_BASE_MIN_CONFIDENCE",
             DEFAULT_ADAPTIVE_BASE_MIN_CONFIDENCE,
+        ),
+        "min_confidence_to_trade": _env_float(
+            "MIN_CONFIDENCE_TO_TRADE",
+            DEFAULT_MIN_CONFIDENCE_TO_TRADE,
         ),
         "adaptive_min_floor": _env_float("ADAPTIVE_MIN_FLOOR", DEFAULT_ADAPTIVE_MIN_FLOOR),
         "adaptive_min_ceiling": _env_float("ADAPTIVE_MIN_CEILING", DEFAULT_ADAPTIVE_MIN_CEILING),
@@ -96,6 +101,8 @@ def _validate_config(config):
         return "config inválida: adaptive confidence bounds têm de estar entre 0 e 1"
     if config["adaptive_base_min_confidence"] < 0 or config["adaptive_base_min_confidence"] > 1:
         return "config inválida: ADAPTIVE_BASE_MIN_CONFIDENCE tem de estar entre 0 e 1"
+    if config["min_confidence_to_trade"] < 0 or config["min_confidence_to_trade"] > 1:
+        return "config inválida: MIN_CONFIDENCE_TO_TRADE tem de estar entre 0 e 1"
     return None
 
 
@@ -250,6 +257,7 @@ def evaluate_trade(
                 "allow_buy": config["allow_buy"],
                 "allow_sell": config["allow_sell"],
                 "adaptive_base_min_confidence": config["adaptive_base_min_confidence"],
+                "min_confidence_to_trade": config["min_confidence_to_trade"],
                 "adaptive_min_floor": config["adaptive_min_floor"],
                 "adaptive_min_ceiling": config["adaptive_min_ceiling"],
                 "max_spread_pips": config["max_spread_pips"],
@@ -275,8 +283,8 @@ def evaluate_trade(
         return result
 
     if signal == "NEUTRAL":
-        result["block_reason"] = combined_signal.get("neutral_reason") or "sinal combinado é NEUTRAL"
-        _append_gate(result, combined_signal.get("neutral_reason") or "weak_signal")
+        result["block_reason"] = "sinal combinado é NEUTRAL"
+        _append_gate(result, combined_signal.get("neutral_reason") or "signal_not_tradeable")
         return result
 
     if signal == "BUY" and not config["allow_buy"]:
