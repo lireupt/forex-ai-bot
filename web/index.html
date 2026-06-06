@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Forex AI Bot — dashboard</title>
+  <title>Forex AI Bot</title>
   <style>
     :root {
       --bg: #0f1115;
@@ -16,1013 +16,1224 @@
       --sell: #ed4245;
       --neutral: #8a93a3;
       --warn: #f5a623;
-      --danger: #ed4245;
+      --accent: #5c7cfa;
+      --r: 8px;
     }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
-        Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
-      font-size: 14px;
-      line-height: 1.45;
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 14px; line-height: 1.45; min-height: 100vh;
     }
-    header {
-      padding: 18px 24px;
+
+    /* ── HEADER ── */
+    .app-header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--bg); border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+    }
+    .app-header-inner {
+      max-width: 1440px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; height: 52px;
+    }
+    .app-logo { display: flex; align-items: center; gap: 10px; }
+    .app-logo .icon {
+      width: 28px; height: 28px;
+      background: linear-gradient(135deg, #2ec27e 0%, #5c7cfa 100%);
+      border-radius: 6px; display: flex; align-items: center;
+      justify-content: center; font-size: 11px; font-weight: 800; color: white;
+    }
+    .app-logo h1 { font-size: 15px; font-weight: 700; }
+    .app-logo h1 span { font-size: 11px; color: var(--muted); margin-left: 4px; }
+    .app-meta { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 11px; }
+    .app-meta .sep { color: var(--border); }
+    .live-dot {
+      display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+      background: var(--buy); box-shadow: 0 0 6px var(--buy); margin-right: 5px;
+    }
+
+    /* ── TAB NAV ── */
+    .tab-nav { background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 24px; }
+    .tab-nav-inner { max-width: 1440px; margin: 0 auto; display: flex; }
+    .tab-btn {
+      background: transparent; color: var(--muted); border: none;
+      border-bottom: 2px solid transparent; padding: 0 20px; height: 44px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+      display: flex; align-items: center; gap: 7px;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--text); border-bottom-color: var(--buy); }
+
+    /* ── BODY ── */
+    .app-body { max-width: 1440px; margin: 0 auto; padding: 20px 24px 48px; }
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* ── ERROR ── */
+    .error-banner {
+      background: rgba(237,66,69,.12); border: 1px solid rgba(237,66,69,.35);
+      color: #ffb1b3; padding: 10px 16px; border-radius: var(--r);
+      margin-bottom: 16px; font-size: 12px;
+    }
+
+    /* ── KPI CARDS ── */
+    .kpi-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px; margin-bottom: 12px;
+    }
+    .kpi-card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 14px 16px;
+      position: relative; overflow: hidden;
+    }
+    .kpi-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0;
+      height: 2px; background: var(--border);
+    }
+    .kpi-card.green::before { background: var(--buy); }
+    .kpi-card.red::before { background: var(--sell); }
+    .kpi-card.blue::before { background: var(--accent); }
+    .kpi-card.orange::before { background: var(--warn); }
+    .kpi-label {
+      color: var(--muted); font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.7px; margin-bottom: 8px; font-weight: 600;
+    }
+    .kpi-value { font-size: 22px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+    .kpi-value.green { color: var(--buy); }
+    .kpi-value.red { color: var(--sell); }
+    .kpi-value.blue { color: var(--accent); }
+    .kpi-value.orange { color: var(--warn); }
+    .kpi-sub { color: var(--muted); font-size: 11px; margin-top: 5px; }
+
+    /* ── STATUS CARDS ── */
+    .status-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px; margin-bottom: 20px;
+    }
+    .status-card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 12px 14px;
+    }
+    .status-card .s-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; margin-bottom: 6px; }
+    .status-card .s-value { font-size: 14px; font-weight: 600; }
+    .status-card .s-sub { color: var(--muted); font-size: 11px; margin-top: 3px; }
+
+    /* ── CHART GRID ── */
+    .chart-grid {
+      display: grid; grid-template-columns: repeat(4,1fr);
+      gap: 10px; margin-bottom: 20px;
+    }
+    @media (max-width: 1100px) { .chart-grid { grid-template-columns: repeat(2,1fr); } }
+    @media (max-width: 600px) { .chart-grid { grid-template-columns: 1fr; } }
+    .chart-card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 14px 16px;
+    }
+    .chart-title {
+      font-size: 10px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: .6px; margin-bottom: 10px; font-weight: 600;
+    }
+    .chart-wrap { width: 100%; height: 140px; overflow: hidden; }
+
+    /* ── SUB TABS ── */
+    .sub-tabs {
+      display: flex; gap: 0; margin-bottom: 16px;
       border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 12px;
     }
-    header h1 { font-size: 18px; margin: 0; font-weight: 600; }
-    header .meta { color: var(--muted); font-size: 12px; }
-    main { padding: 18px 24px 48px 24px; max-width: 1280px; margin: 0 auto; }
+    .sub-tab-btn {
+      background: transparent; color: var(--muted); border: none;
+      border-bottom: 2px solid transparent; padding: 8px 18px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      transition: color .15s, border-color .15s; margin-bottom: -1px;
+    }
+    .sub-tab-btn:hover { color: var(--text); }
+    .sub-tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+    .sub-page { display: none; }
+    .sub-page.active { display: block; }
 
-    .cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 12px;
-      margin-bottom: 24px;
+    /* ── TABLE PANEL ── */
+    .table-panel {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--r); overflow: hidden; margin-bottom: 20px;
     }
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 14px 14px 12px 14px;
+    .table-toolbar {
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     }
-    .card .label {
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      margin-bottom: 6px;
+    .fp {
+      background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+      padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 500;
+      cursor: pointer; transition: all .1s;
     }
-    .card .value { font-size: 22px; font-weight: 600; }
-    .card .sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
+    .fp:hover { color: var(--text); }
+    .fp.active { background: rgba(46,194,126,.12); color: var(--buy); border-color: rgba(46,194,126,.35); }
+    .fp.sell.active { background: rgba(237,66,69,.12); color: var(--sell); border-color: rgba(237,66,69,.35); }
+    .fp.neutral.active { background: rgba(138,147,163,.12); color: var(--neutral); border-color: rgba(138,147,163,.3); }
+    .fp.warn.active { background: rgba(245,166,35,.12); color: var(--warn); border-color: rgba(245,166,35,.35); }
+    .search-box {
+      background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+      padding: 5px 10px; border-radius: 6px; font-size: 12px; outline: none;
+      width: 180px; margin-left: auto;
+    }
+    .search-box::placeholder { color: var(--muted); }
+    .search-box:focus { border-color: rgba(46,194,126,.4); }
 
-    .accent-buy { color: var(--buy); }
-    .accent-sell { color: var(--sell); }
-    .accent-neutral { color: var(--neutral); }
-    .accent-warn { color: var(--warn); }
-    .accent-danger { color: var(--danger); }
+    /* ── TABLE ── */
+    .dt { width: 100%; border-collapse: collapse; }
+    .dt th {
+      padding: 9px 12px; text-align: left; background: var(--panel-2);
+      color: var(--muted); font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .6px;
+      border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .dt td {
+      padding: 8px 12px; border-bottom: 1px solid rgba(42,49,61,.5);
+      font-size: 12px; font-variant-numeric: tabular-nums;
+      vertical-align: middle; white-space: nowrap;
+    }
+    .dt tbody tr:last-child td { border-bottom: none; }
+    .dt tbody tr:hover { background: rgba(29,34,44,.6); }
+    .dt td.wrap { white-space: normal; max-width: 220px; color: var(--muted); font-size: 11px; }
 
-    section.table-wrap {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      overflow: hidden;
-      margin-bottom: 24px;
+    /* ── PAGINATION ── */
+    .pagination {
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border);
     }
-    section.table-wrap h2 {
-      font-size: 13px;
-      margin: 0;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .pg-btn {
+      background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+      padding: 5px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
     }
-    section.table-wrap .filters {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    section.table-wrap .filters button {
-      background: var(--panel-2);
-      color: var(--muted);
-      border: 1px solid var(--border);
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 11px;
-      cursor: pointer;
-      letter-spacing: 0.4px;
-      text-transform: none;
-    }
-    section.table-wrap .filters button.active {
-      color: var(--text);
-      background: rgba(46, 194, 126, 0.15);
-      border-color: rgba(46, 194, 126, 0.4);
-    }
-    table { width: 100%; border-collapse: collapse; }
-    th, td {
-      padding: 9px 10px;
-      text-align: left;
-      border-bottom: 1px solid var(--border);
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-    }
-    th {
-      color: var(--muted);
-      font-weight: 500;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      background: var(--panel-2);
-    }
-    tbody tr:hover { background: var(--panel-2); }
-    td.reason { white-space: normal; max-width: 280px; color: var(--muted); font-size: 12px; }
+    .pg-btn:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
+    .pg-btn:disabled { opacity: .35; cursor: default; }
+    .pg-info { color: var(--muted); font-size: 12px; }
 
+    /* ── PILLS ── */
     .pill {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.4px;
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 10px; font-weight: 700; letter-spacing: .4px;
     }
-    .pill.BUY { background: rgba(46, 194, 126, 0.15); color: var(--buy); }
-    .pill.SELL { background: rgba(237, 66, 69, 0.15); color: var(--sell); }
-    .pill.NEUTRAL { background: rgba(138, 147, 163, 0.15); color: var(--neutral); }
-    .pill.blocked { background: rgba(245, 166, 35, 0.15); color: var(--warn); }
-    .pill.allowed { background: rgba(46, 194, 126, 0.15); color: var(--buy); }
-    .pill.event { background: rgba(237, 66, 69, 0.15); color: var(--danger); }
-    .pill.win { background: rgba(46, 194, 126, 0.15); color: var(--buy); }
-    .pill.loss { background: rgba(237, 66, 69, 0.15); color: var(--sell); }
-    .pill.expired { background: rgba(138, 147, 163, 0.15); color: var(--muted); }
-    .pill.open { background: rgba(245, 166, 35, 0.15); color: var(--warn); }
+    .pill.BUY { background: rgba(46,194,126,.15); color: var(--buy); }
+    .pill.SELL { background: rgba(237,66,69,.15); color: var(--sell); }
+    .pill.NEUTRAL { background: rgba(138,147,163,.15); color: var(--neutral); }
+    .pill.blocked { background: rgba(245,166,35,.15); color: var(--warn); }
+    .pill.allowed { background: rgba(46,194,126,.15); color: var(--buy); }
+    .pill.event { background: rgba(237,66,69,.15); color: var(--sell); }
+    .pill.win { background: rgba(46,194,126,.15); color: var(--buy); }
+    .pill.loss { background: rgba(237,66,69,.15); color: var(--sell); }
+    .pill.expired { background: rgba(138,147,163,.15); color: var(--neutral); }
+    .pill.open { background: rgba(245,166,35,.15); color: var(--warn); }
 
+    /* ── SCORE BAR ── */
+    .sbar {
+      display: inline-block; width: 60px; height: 5px;
+      background: var(--panel-2); border-radius: 3px;
+      vertical-align: middle; position: relative; margin-right: 4px;
+    }
+    .sbar .f { position: absolute; top: 0; bottom: 0; background: var(--buy); border-radius: 3px; }
+    .sbar .f.n { background: var(--sell); }
+
+    /* ── AGGREGATOR BANNER ── */
+    .agg-rec {
+      padding: 12px 18px; border-radius: var(--r); margin-bottom: 14px;
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 600; font-size: 14px;
+    }
+    .agg-rec.advisory { background: rgba(46,194,126,.1); border: 1px solid rgba(46,194,126,.3); color: var(--buy); }
+    .agg-rec.shadow { background: rgba(245,166,35,.1); border: 1px solid rgba(245,166,35,.3); color: var(--warn); }
+    .agg-rec.neutral-mode { background: rgba(138,147,163,.1); border: 1px solid rgba(138,147,163,.3); color: var(--muted); }
+
+    /* ── VOL ── */
     .vol-low { color: var(--muted); }
     .vol-normal { color: var(--text); }
     .vol-high { color: var(--warn); font-weight: 600; }
     .vol-unknown { color: var(--muted); font-style: italic; }
 
-    .empty {
-      padding: 40px 20px;
-      text-align: center;
-      color: var(--muted);
+    /* ── EMPTY ── */
+    .empty-state { padding: 40px 20px; text-align: center; color: var(--muted); font-size: 13px; }
+
+    /* ── EXPORT ── */
+    .export-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px; max-width: 1000px;
     }
-    .footer {
-      margin-top: 18px;
-      color: var(--muted);
-      font-size: 11px;
+    .export-card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 22px 18px; text-align: center;
+      cursor: pointer; transition: border-color .15s, background .15s;
     }
-    .error-banner {
-      background: rgba(237, 66, 69, 0.12);
-      border: 1px solid rgba(237, 66, 69, 0.4);
-      color: #ffb1b3;
-      padding: 10px 14px;
-      border-radius: 6px;
-      margin-bottom: 16px;
-      font-size: 12px;
+    .export-card:hover { border-color: rgba(46,194,126,.4); background: rgba(46,194,126,.03); }
+    .export-icon { font-size: 26px; margin-bottom: 10px; }
+    .export-label { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .export-desc { font-size: 11px; color: var(--muted); margin-bottom: 12px; }
+    .export-btn {
+      background: rgba(46,194,126,.12); color: var(--buy);
+      border: 1px solid rgba(46,194,126,.3); padding: 6px 16px;
+      border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .export-btn:hover { background: rgba(46,194,126,.2); }
+
+    /* ── FOOTER ── */
+    .app-footer {
+      color: var(--muted); font-size: 11px; padding-top: 16px;
+      border-top: 1px solid var(--border); margin-top: 4px;
     }
 
-    .details-btn {
-      background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--border);
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 11px;
-      cursor: pointer;
-      letter-spacing: 0.4px;
-    }
-    .details-btn:hover {
-      color: var(--text);
-      border-color: var(--muted);
-    }
-
+    /* ── MODAL ── */
     .modal-backdrop {
-      position: fixed; inset: 0;
-      background: rgba(0, 0, 0, 0.6);
-      display: none;
-      align-items: flex-start;
-      justify-content: center;
-      padding: 32px 16px;
-      z-index: 100;
-      overflow-y: auto;
+      position: fixed; inset: 0; background: rgba(0,0,0,.65);
+      display: none; align-items: flex-start; justify-content: center;
+      padding: 32px 16px; z-index: 200; overflow-y: auto;
     }
     .modal-backdrop.open { display: flex; }
     .modal {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      width: 100%;
-      max-width: 760px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px; width: 100%; max-width: 780px;
+      box-shadow: 0 24px 80px rgba(0,0,0,.5);
     }
-    .modal header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid var(--border);
-      padding: 14px 18px;
+    .modal > header {
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid var(--border); padding: 14px 20px;
     }
-    .modal header h3 { margin: 0; font-size: 14px; font-weight: 600; }
-    .modal header .close {
-      background: transparent; color: var(--muted);
-      border: 1px solid var(--border);
-      padding: 4px 10px; border-radius: 6px;
-      cursor: pointer; font-size: 12px;
+    .modal > header h3 { margin: 0; font-size: 14px; font-weight: 600; }
+    .modal .close-btn {
+      background: transparent; color: var(--muted); border: 1px solid var(--border);
+      padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
     }
-    .modal section.modal-section {
-      padding: 14px 18px;
-      border-bottom: 1px solid var(--border);
+    .modal .close-btn:hover { color: var(--text); }
+    .modal-section { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+    .modal-section:last-child { border-bottom: none; }
+    .modal-section h4 {
+      margin: 0 0 10px; font-size: 10px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .7px; font-weight: 700;
     }
-    .modal section.modal-section:last-child { border-bottom: none; }
-    .modal section.modal-section h4 {
-      margin: 0 0 8px 0;
-      font-size: 11px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      font-weight: 600;
-    }
-    .kv {
-      display: grid;
-      grid-template-columns: 180px 1fr;
-      gap: 4px 12px;
-      font-size: 12px;
-    }
+    .kv { display: grid; grid-template-columns: 180px 1fr; gap: 4px 12px; font-size: 12px; }
     .kv .k { color: var(--muted); }
     .kv .v { color: var(--text); word-break: break-word; }
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 4px 16px;
-      font-size: 12px;
-    }
+    .features-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 4px 16px; font-size: 12px; }
     pre.candles {
-      background: var(--panel-2);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 10px;
-      font-size: 11px;
-      overflow-x: auto;
-      color: var(--text);
-      margin: 0;
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px; font-size: 11px; overflow-x: auto; margin: 0;
     }
-    .ai-analysis-text {
-      white-space: pre-wrap;
-      line-height: 1.55;
-      color: var(--text);
-      font-size: 13px;
-      margin: 0;
-    }
+    .ai-analysis-text { white-space: pre-wrap; line-height: 1.55; font-size: 13px; margin: 0; }
 
-    .score-bar {
-      display: inline-block;
-      width: 80px;
-      height: 6px;
-      background: var(--panel-2);
-      border-radius: 3px;
-      vertical-align: middle;
-      position: relative;
-      margin-right: 6px;
-    }
-    .score-bar .fill {
-      position: absolute;
-      top: 0; bottom: 0;
-      background: var(--buy);
-      border-radius: 3px;
-    }
-    .score-bar .fill.neg { background: var(--sell); }
-
-    .gate-status {
-      display: inline-block;
-      padding: 4px 14px;
-      border-radius: 999px;
-      font-weight: 700;
-      font-size: 13px;
-      letter-spacing: 0;
-      text-transform: uppercase;
-    }
-    .gate-status.go {
-      background: rgba(46, 194, 126, 0.18);
-      color: var(--buy);
-      border: 1px solid rgba(46, 194, 126, 0.5);
-    }
-    .gate-status.no_go {
-      background: rgba(237, 66, 69, 0.18);
-      color: var(--sell);
-      border: 1px solid rgba(237, 66, 69, 0.5);
-    }
-    .gate-status.partial {
-      background: rgba(245, 166, 35, 0.18);
-      color: var(--warn);
-      border: 1px solid rgba(245, 166, 35, 0.5);
-    }
-    .gates-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 8px;
-      padding: 12px 16px;
-    }
-    .gate-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 12px;
-      background: var(--panel-2);
-      border-radius: 6px;
-      border-left: 3px solid var(--border);
-      font-size: 12px;
-    }
-    .gate-row.pass { border-left-color: var(--buy); }
-    .gate-row.fail { border-left-color: var(--sell); }
-    .gate-row.insufficient { border-left-color: var(--muted); opacity: 0.7; }
-    .gate-row .label { color: var(--muted); }
-    .gate-row .value { font-weight: 600; font-variant-numeric: tabular-nums; }
-    .gate-row .value.pass { color: var(--buy); }
-    .gate-row .value.fail { color: var(--sell); }
-    .gate-row .value.insufficient { color: var(--muted); font-style: italic; }
-    .splits-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 8px;
-      padding: 0 16px 16px 16px;
-    }
-    .split-card {
-      background: var(--panel-2);
-      border-radius: 6px;
-      padding: 10px 12px;
-      font-size: 12px;
-    }
-    .split-card .split-label {
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 4px;
-    }
-    .split-card .split-stats { color: var(--muted); font-size: 11px; }
-    .gate-history {
-      padding: 0 16px 16px 16px;
-      color: var(--muted);
-      font-size: 12px;
+    @media (max-width: 768px) {
+      .app-body { padding: 14px 14px 40px; }
+      .kpi-grid { grid-template-columns: repeat(2,1fr); }
+      .status-grid { grid-template-columns: repeat(2,1fr); }
+      .app-meta span:nth-child(n+3) { display: none; }
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Forex AI Bot — dashboard</h1>
-    <div class="meta">
-      <span id="generated">a carregar…</span>
-      &nbsp;·&nbsp;
-      <span id="source"></span>
-      &nbsp;·&nbsp;
-      auto-refresh 60s
+
+<header class="app-header">
+  <div class="app-header-inner">
+    <div class="app-logo">
+      <div class="icon">fx</div>
+      <h1>Forex AI Bot <span>EUR/USD paper-trading</span></h1>
     </div>
-  </header>
-
-  <main>
-    <div id="error" class="error-banner" style="display:none;"></div>
-
-    <div class="cards" id="cards"></div>
-
-    <section class="table-wrap">
-      <h2>Calibração</h2>
-      <div class="cards" id="calibration-cards" style="margin: 12px 16px 4px 16px;"></div>
-    </section>
-
-    <section class="table-wrap">
-      <h2>
-        Decisões recentes
-      </h2>
-      <div id="table-host">
-        <div class="empty">a carregar…</div>
-      </div>
-    </section>
-
-    <section class="table-wrap">
-      <h2>
-        Paper trades
-        <div class="filters" id="paper-filters">
-          <button class="active" data-filter="all">todos</button>
-          <button data-filter="ai_only">só IA</button>
-          <button data-filter="combined">combinado</button>
-          <button data-filter="BUY">BUY</button>
-          <button data-filter="SELL">SELL</button>
-        </div>
-      </h2>
-      <div class="cards" id="paper-cards" style="margin: 12px 16px 4px 16px;"></div>
-      <div id="paper-table-host">
-        <div class="empty">a carregar…</div>
-      </div>
-    </section>
-
-    <section class="table-wrap">
-      <h2>
-        Validation gates
-        <span id="gates-status" class="gate-status partial">—</span>
-      </h2>
-      <div id="gates-grid" class="gates-grid">
-        <div class="empty">a carregar…</div>
-      </div>
-      <div id="gates-splits" class="splits-grid"></div>
-      <div id="gates-history" class="gate-history"></div>
-    </section>
-
-    <p class="footer">
-      Dados gerados estaticamente por <code>scripts/export_logs.py</code>.
-      Paper trades são simulações (não há ordens reais). Nada aqui é
-      recomendação financeira.
-    </p>
-  </main>
-
-  <div class="modal-backdrop" id="modal-backdrop">
-    <div class="modal" id="modal">
-      <header>
-        <h3 id="modal-title">Detalhes da decisão</h3>
-        <button class="close" id="modal-close">fechar</button>
-      </header>
-      <div id="modal-body"></div>
+    <div class="app-meta">
+      <span><span class="live-dot"></span><span id="hd-updated">a carregar…</span></span>
+      <span class="sep">·</span>
+      <span id="hd-source">—</span>
+      <span class="sep">·</span>
+      <span>auto-refresh 60s</span>
     </div>
   </div>
+</header>
 
-  <script>
-    (function () {
-      const REFRESH_MS = 60 * 1000;
-      const DATA_URL = "data.json";
+<nav class="tab-nav">
+  <div class="tab-nav-inner">
+    <button class="tab-btn active" data-tab="dashboard">
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="currentColor">
+        <rect x="0" y="0" width="6" height="6" rx="1"/><rect x="8" y="0" width="6" height="6" rx="1"/>
+        <rect x="0" y="8" width="6" height="6" rx="1"/><rect x="8" y="8" width="6" height="6" rx="1"/>
+      </svg>
+      Dashboard
+    </button>
+    <button class="tab-btn" data-tab="trades">
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+        <path d="M1 10L5 6L8 9L13 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      Trades
+    </button>
+    <button class="tab-btn" data-tab="export">
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+        <path d="M7 1v7M4 5l3 3 3-3M2 11h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      Exportação
+    </button>
+  </div>
+</nav>
 
-      const $ = (id) => document.getElementById(id);
+<div class="app-body">
+  <div id="error-banner" class="error-banner" style="display:none;"></div>
 
-      let lastDecisions = [];
-      let lastPaperTrades = [];
-      let lastPaperSummary = {};
-      let paperFilter = "all";
+  <!-- PAGE: DASHBOARD -->
+  <section class="page active" id="page-dashboard">
+    <div class="kpi-grid" id="kpi-row1"></div>
+    <div class="status-grid" id="kpi-row2"></div>
+    <div class="chart-grid" id="charts-row"></div>
+  </section>
 
-      function fmt(value, fallback) {
-        if (value === null || value === undefined || value === "") return fallback || "—";
-        return value;
-      }
+  <!-- PAGE: TRADES -->
+  <section class="page" id="page-trades">
+    <div class="sub-tabs">
+      <button class="sub-tab-btn active" data-subtab="decisions">Decisões</button>
+      <button class="sub-tab-btn" data-subtab="paper">Paper Trades</button>
+      <button class="sub-tab-btn" data-subtab="aggregator">IA Agregadora</button>
+    </div>
 
-      function fmtNumber(value, digits) {
-        if (value === null || value === undefined || value === "") return "—";
-        const n = Number(value);
-        if (Number.isNaN(n)) return "—";
-        return n.toFixed(digits == null ? 2 : digits);
-      }
+    <!-- Decisões -->
+    <div class="sub-page active" id="sub-decisions">
+      <div class="table-panel">
+        <div class="table-toolbar" id="dec-toolbar">
+          <button class="fp active" data-f="all">Todos</button>
+          <button class="fp" data-f="BUY">BUY</button>
+          <button class="fp sell" data-f="SELL">SELL</button>
+          <button class="fp neutral" data-f="NEUTRAL">NEUTRAL</button>
+          <button class="fp" data-f="executed">Executado</button>
+          <button class="fp warn" data-f="blocked">Bloqueado</button>
+          <input type="text" class="search-box" id="dec-search" placeholder="Pesquisar…">
+        </div>
+        <div id="dec-table-host"><div class="empty-state">a carregar…</div></div>
+        <div class="pagination" id="dec-pages" style="display:none;"></div>
+      </div>
+    </div>
 
-      function fmtScore(value) {
-        if (value === null || value === undefined || value === "") return "—";
-        const n = Number(value);
-        if (Number.isNaN(n)) return "—";
-        return (n >= 0 ? "+" : "") + n.toFixed(2);
-      }
+    <!-- Paper Trades -->
+    <div class="sub-page" id="sub-paper">
+      <div class="kpi-grid" id="paper-kpi" style="margin-bottom:14px;"></div>
+      <div class="table-panel">
+        <div class="table-toolbar" id="paper-toolbar">
+          <button class="fp active" data-f="all">Todos</button>
+          <button class="fp" data-f="BUY">BUY</button>
+          <button class="fp sell" data-f="SELL">SELL</button>
+          <button class="fp" data-f="win">Win</button>
+          <button class="fp sell" data-f="loss">Loss</button>
+          <button class="fp neutral" data-f="expired">Expired</button>
+        </div>
+        <div id="paper-table-host"><div class="empty-state">a carregar…</div></div>
+        <div class="pagination" id="paper-pages" style="display:none;"></div>
+      </div>
+    </div>
 
-      function fmtTime(iso) {
-        if (!iso) return "—";
-        const d = new Date(iso);
-        if (Number.isNaN(d.getTime())) return iso;
-        const pad = (n) => String(n).padStart(2, "0");
-        return (
-          d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " +
-          pad(d.getHours()) + ":" + pad(d.getMinutes())
-        );
-      }
+    <!-- IA Agregadora -->
+    <div class="sub-page" id="sub-aggregator">
+      <div id="agg-banner"></div>
+      <div class="kpi-grid" id="agg-kpi" style="margin-bottom:14px;"></div>
+      <div class="chart-grid" id="agg-charts" style="grid-template-columns:repeat(2,1fr);margin-bottom:14px;"></div>
+      <div class="table-panel">
+        <div class="table-toolbar">
+          <span style="font-size:11px;color:var(--muted);">Decisões com dados do agregador IA</span>
+        </div>
+        <div id="agg-table-host"><div class="empty-state">a carregar…</div></div>
+        <div class="pagination" id="agg-pages" style="display:none;"></div>
+      </div>
+    </div>
+  </section>
 
-      function pill(value, extra) {
-        const v = (value || "NEUTRAL").toString();
-        const cls = extra ? `pill ${v} ${extra}` : `pill ${v}`;
-        return `<span class="${cls}">${v}</span>`;
-      }
+  <!-- PAGE: EXPORT -->
+  <section class="page" id="page-export">
+    <p style="color:var(--muted);font-size:12px;margin-bottom:20px;">
+      Todos os ficheiros são gerados localmente no browser. Nenhum dado é enviado para servidores externos.
+    </p>
+    <div class="export-grid">
+      <div class="export-card" id="exp-decisions">
+        <div class="export-icon">📋</div>
+        <div class="export-label">Decisões CSV</div>
+        <div class="export-desc">Sinais técnicos, IA e decisões do bot</div>
+        <button class="export-btn">Descarregar</button>
+      </div>
+      <div class="export-card" id="exp-paper">
+        <div class="export-icon">📊</div>
+        <div class="export-label">Paper Trades CSV</div>
+        <div class="export-desc">Todos os trades simulados com resultado</div>
+        <button class="export-btn">Descarregar</button>
+      </div>
+      <div class="export-card" id="exp-aggregator">
+        <div class="export-icon">🤖</div>
+        <div class="export-label">IA Agregadora CSV</div>
+        <div class="export-desc">Dados do agregador por decisão</div>
+        <button class="export-btn">Descarregar</button>
+      </div>
+      <div class="export-card" id="exp-all">
+        <div class="export-icon">📦</div>
+        <div class="export-label">Tudo CSV</div>
+        <div class="export-desc">Decisões + Trades + Agregador combinados</div>
+        <button class="export-btn">Descarregar</button>
+      </div>
+      <div class="export-card" id="exp-json">
+        <div class="export-icon">🗂️</div>
+        <div class="export-label">JSON Completo</div>
+        <div class="export-desc">data.json completo tal como no servidor</div>
+        <button class="export-btn">Descarregar</button>
+      </div>
+    </div>
+  </section>
 
-      function signalFromScore(value) {
-        const n = Number(value);
-        if (Number.isNaN(n)) return "NEUTRAL";
-        if (n >= 0.35) return "BUY";
-        if (n <= -0.35) return "SELL";
-        return "NEUTRAL";
-      }
+  <footer class="app-footer">
+    Dados gerados por <code>scripts/export_logs.py</code>. Paper trades são simulações (sem ordens reais). Nada aqui é recomendação financeira.
+  </footer>
+</div>
 
-      function scorePill(value) {
-        return `${pill(signalFromScore(value))} <span style="color:var(--muted);font-size:11px;">${fmtScore(value)}</span>`;
-      }
+<!-- MODAL -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal">
+    <header>
+      <h3 id="modal-title">Detalhes</h3>
+      <button class="close-btn" id="modal-close">fechar</button>
+    </header>
+    <div id="modal-body"></div>
+  </div>
+</div>
 
-      function escapeHtml(value) {
-        if (value === null || value === undefined) return "";
-        return String(value)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-      }
+<script>
+(function () {
+  "use strict";
+  const REFRESH_MS = 60_000;
+  const DATA_URL = "data.json";
+  const PG = 25;
 
-      function scoreBar(value) {
-        if (value === null || value === undefined) return "";
-        const n = Number(value);
-        if (Number.isNaN(n)) return "";
-        const pct = Math.min(50, Math.abs(n) * 50);
-        const left = n >= 0 ? "50%" : `${50 - pct}%`;
-        const cls = n >= 0 ? "fill" : "fill neg";
-        return `<span class="score-bar"><span class="${cls}" style="left:${left};width:${pct}%;"></span></span>${fmtScore(n)}`;
-      }
+  let _data = null;
+  let _decisions = [];
+  let _paperTrades = [];
+  let _aggRows = [];
 
-      function renderCards(summary) {
-        if (!summary) return;
-        const cards = [
-          { label: "Total exportado", value: summary.total ?? 0 },
-          {
-            label: "Combinado BUY/SELL/NEUTRAL",
-            value: `${summary.buy ?? 0} / ${summary.sell ?? 0} / ${summary.neutral ?? 0}`,
-            sub: "regra estrita 3/3",
-          },
-          {
-            label: "Score signal BUY/SELL/NEUTRAL",
-            value: `${summary.score_buy ?? 0} / ${summary.score_sell ?? 0} / ${summary.score_neutral ?? 0}`,
-            sub: "regra por threshold de score",
-          },
-          {
-            label: "Shadow BUY/SELL/NEUTRAL",
-            value: `${summary.shadow_buy ?? 0} / ${summary.shadow_sell ?? 0} / ${summary.shadow_neutral ?? 0}`,
-            sub: "regra 2/3",
-          },
-          {
-            label: "Trades simulados (gating)",
-            value: `${summary.allowed ?? 0}`,
-            sub: `bloqueados: ${summary.blocked ?? 0}`,
-            accent: (summary.allowed ?? 0) > 0 ? "accent-buy" : "accent-warn",
-          },
-          {
-            label: "Confiança média",
-            value: `${summary.average_confidence ?? 0}%`,
-          },
-          {
-            label: "Score combinado médio",
-            value: fmtScore(summary.average_combined_score),
-          },
-          {
-            label: "Origem dos dados",
-            value: summary.source || "—",
-            sub: "sqlite preferido",
-          },
-        ];
-        $("cards").innerHTML = cards
-          .map((c) => {
-            const sub = c.sub ? `<div class="sub">${c.sub}</div>` : "";
-            const accent = c.accent ? ` ${c.accent}` : "";
-            return `<div class="card"><div class="label">${c.label}</div><div class="value${accent}">${c.value}</div>${sub}</div>`;
-          })
-          .join("");
-      }
+  const decSt = { page: 1, filter: "all", search: "" };
+  const paperSt = { page: 1, filter: "all" };
+  const aggSt = { page: 1 };
 
-      function renderCalibration(calibration) {
-        if (!calibration || Object.keys(calibration).length === 0) {
-          $("calibration-cards").innerHTML = '<div class="empty">Sem dados de calibração ainda.</div>';
-          return;
-        }
-        const cards = [
-          { label: "Taxa de bloqueio", value: calibration.block_rate != null ? `${calibration.block_rate}%` : "—",
-            sub: `${calibration.total_blocked ?? 0} de ${calibration.total_decisions ?? 0}` },
-          { label: "Principal motivo", value: escapeHtml(calibration.top_block_reason || "—") },
-          { label: "Trades simulados", value: calibration.total_executed ?? 0 },
-          { label: "Winrate", value: calibration.winrate != null ? `${calibration.winrate}%` : "—",
-            sub: `W/L ${calibration.wins ?? 0}/${calibration.losses ?? 0}` },
-          { label: "Net pips", value: calibration.net_pips != null ? fmtNumber(calibration.net_pips, 1) : "—",
-            accent: (calibration.net_pips ?? 0) >= 0 ? "accent-buy" : "accent-sell" },
-          { label: "Melhor direção", value: calibration.best_direction || "—",
-            sub: `BUY ${fmtNumber((calibration.direction_net_pips || {}).BUY, 1)} / SELL ${fmtNumber((calibration.direction_net_pips || {}).SELL, 1)}` },
-          { label: "Confiança média", value: calibration.avg_confidence != null ? `${calibration.avg_confidence}%` : "—",
-            sub: "trades executados" },
-        ];
-        $("calibration-cards").innerHTML = cards.map((c) => {
-          const sub = c.sub ? `<div class="sub">${c.sub}</div>` : "";
-          const accent = c.accent ? ` ${c.accent}` : "";
-          return `<div class="card"><div class="label">${c.label}</div><div class="value${accent}">${c.value}</div>${sub}</div>`;
-        }).join("");
-      }
+  const $ = id => document.getElementById(id);
+  const $$ = (sel, ctx) => (ctx || document).querySelectorAll(sel);
 
-      function renderTable(decisions) {
-        if (!decisions || decisions.length === 0) {
-          $("table-host").innerHTML = '<div class="empty">Sem decisões registadas ainda.</div>';
-          return;
-        }
+  /* ── UTILS ── */
+  function fmt(v, fb) { return (v == null || v === "") ? (fb || "—") : v; }
+  function fmtN(v, d) {
+    if (v == null || v === "") return "—";
+    const n = Number(v); if (isNaN(n)) return "—";
+    return n.toFixed(d ?? 2);
+  }
+  function fmtScore(v) {
+    if (v == null || v === "") return "—";
+    const n = Number(v); if (isNaN(n)) return "—";
+    return (n >= 0 ? "+" : "") + n.toFixed(2);
+  }
+  function fmtTime(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso); if (isNaN(d)) return iso;
+    const p = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  function fmtDate(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso); if (isNaN(d)) return iso;
+    const p = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+  }
+  function esc(v) {
+    if (v == null) return "";
+    return String(v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+  }
+  function pill(v, extra) {
+    const s = (v || "NEUTRAL").toString();
+    return `<span class="pill ${s}${extra ? " "+extra : ""}">${s}</span>`;
+  }
+  function sigFromScore(v) {
+    const n = Number(v); if (isNaN(n)) return "NEUTRAL";
+    if (n >= 0.35) return "BUY"; if (n <= -0.35) return "SELL"; return "NEUTRAL";
+  }
+  function scorePill(v) {
+    return `${pill(sigFromScore(v))} <span style="color:var(--muted);font-size:10px;">${fmtScore(v)}</span>`;
+  }
+  function scoreBar(v) {
+    if (v == null) return "";
+    const n = Number(v); if (isNaN(n)) return "";
+    const pct = Math.min(50, Math.abs(n) * 50);
+    const left = n >= 0 ? "50%" : `${50-pct}%`;
+    return `<span class="sbar"><span class="f${n<0?" n":""}" style="left:${left};width:${pct}%;"></span></span>${fmtScore(n)}`;
+  }
 
-        const reversed = decisions.slice().reverse();
-        const rows = reversed.map((d, idx) => {
-          const event = d.dangerous_event_nearby
-            ? `<span class="pill event" title="${(d.dangerous_event_reason || "").replace(/"/g, "&quot;")}">evento</span>`
-            : "";
-          const tradeCell = d.trade_allowed
-            ? '<span class="pill allowed">simulado</span>'
-            : '<span class="pill blocked">bloqueado</span>';
-          const volClass = `vol-${d.volatility_level || "unknown"}`;
-          const paperBadge = d.paper_trade
-            ? `<span class="pill ${d.paper_trade.status}" title="paper trade #${d.paper_trade.id}">${d.paper_trade.status}</span>`
-            : "";
+  /* ── TABS ── */
+  function switchTab(tab) {
+    $$(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+    $$(".page").forEach(p => p.classList.toggle("active", p.id === "page-" + tab));
+  }
+  function switchSubTab(sub) {
+    $$(".sub-tab-btn").forEach(b => b.classList.toggle("active", b.dataset.subtab === sub));
+    $$(".sub-page").forEach(p => p.classList.toggle("active", p.id === "sub-" + sub));
+  }
+  $$(".tab-btn").forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
+  $$(".sub-tab-btn").forEach(b => b.addEventListener("click", () => switchSubTab(b.dataset.subtab)));
 
-          return `
-            <tr>
-              <td>${fmtTime(d.timestamp)}</td>
-              <td>${fmt(d.pair, "—")} <span style="color:var(--muted)">${fmt(d.timeframe, "")}</span></td>
-              <td>${pill(d.ai_bias || d.ai_signal)} <span style="color:var(--muted);font-size:11px;">${fmtScore(d.ai_score)}</span></td>
-              <td>${scorePill(d.multi_timeframe_score ?? d.technical_score)}</td>
-              <td>${pill(d.shadow_technical_signal)}</td>
-              <td>${pill(d.combined_signal)} <span style="color:var(--muted);font-size:11px;">${fmtScore(d.combined_score)}</span></td>
-              <td>${d.confidence ?? 0}%</td>
-              <td>${tradeCell} ${event} ${paperBadge}</td>
-              <td class="reason">${d.trade_allowed ? "" : escapeHtml(d.blocking_reason || d.block_reason || "")}</td>
-              <td>${fmtNumber(d.current_price, 5)}</td>
-              <td><span class="${volClass}">${fmtNumber(d.atr_pips, 1)} pips</span></td>
-              <td><button class="details-btn" data-decision-index="${idx}">Detalhes</button></td>
-            </tr>
-          `;
-        }).join("");
+  /* ── CHARTS ── */
+  function emptyChart(msg) {
+    return `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;">${msg||"Sem dados"}</div>`;
+  }
 
-        $("table-host").innerHTML = `
-          <table>
-            <thead>
-              <tr>
-                <th>Timestamp UTC</th>
-                <th>Par</th>
-                <th>IA</th>
-                <th>Técnica</th>
-                <th>Shadow</th>
-                <th>Combinado</th>
-                <th>Conf.</th>
-                <th>Trade</th>
-                <th>Motivo / evento</th>
-                <th>Preço</th>
-                <th>ATR</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        `;
+  function lineChart(values, color) {
+    if (!values || values.length < 2) return emptyChart();
+    const W = 300, H = 120;
+    const min = Math.min(...values), max = Math.max(...values);
+    const range = max - min || 1;
+    const pts = values.map((v, i) => {
+      const x = (i / (values.length - 1)) * W;
+      const y = H - ((v - min) / range) * (H - 12) - 6;
+      return [x, y];
+    });
+    const pathD = "M" + pts.map(p => p.join(",")).join("L");
+    const fillD = `M0,${H}L` + pts.map(p => p.join(",")).join("L") + `L${W},${H}Z`;
+    const gradId = "g" + Math.random().toString(36).slice(2, 7);
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%;">
+      <defs>
+        <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${color}" stop-opacity="0.22"/>
+          <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d="${fillD}" fill="url(#${gradId})"/>
+      <path d="${pathD}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="${pts[pts.length-1][0]}" cy="${pts[pts.length-1][1]}" r="3" fill="${color}"/>
+    </svg>`;
+  }
 
-        $("table-host").querySelectorAll(".details-btn").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            const idx = Number(btn.dataset.decisionIndex);
-            openDecisionModal(reversed[idx]);
-          });
-        });
-      }
-
-      function renderPaperCards(summary, filter) {
-        const map = {
-          all: "Todos",
-          ai_only: "Só IA",
-          combined: "Combinado",
-          BUY: "BUY",
-          SELL: "SELL",
-        };
-        const stats = summary[filter] || summary.all || {};
-        const cards = [
-          { label: `Paper trades (${map[filter] || filter})`, value: stats.total ?? 0,
-            sub: `abertos: ${stats.open ?? 0}` },
-          { label: "Wins / Losses / Expired",
-            value: `${stats.wins ?? 0} / ${stats.losses ?? 0} / ${stats.expired ?? 0}` },
-          { label: "Winrate", value: stats.win_rate != null ? `${stats.win_rate}%` : "—" },
-          { label: "Avg pips", value: stats.avg_pips != null ? fmtNumber(stats.avg_pips, 1) : "—" },
-          { label: "Avg R", value: stats.avg_r != null ? fmtNumber(stats.avg_r, 2) : "—" },
-          { label: "Best / Worst",
-            value: `${stats.best_pips != null ? fmtNumber(stats.best_pips, 1) : "—"} / ${stats.worst_pips != null ? fmtNumber(stats.worst_pips, 1) : "—"}` },
-        ];
-        $("paper-cards").innerHTML = cards.map((c) => {
-          const sub = c.sub ? `<div class="sub">${c.sub}</div>` : "";
-          return `<div class="card"><div class="label">${c.label}</div><div class="value">${c.value}</div>${sub}</div>`;
-        }).join("");
-      }
-
-      function filterPaperTrades(trades, filter) {
-        if (!filter || filter === "all") return trades;
-        if (filter === "ai_only") return trades.filter((t) => t.source === "ai_only");
-        if (filter === "combined") return trades.filter((t) => t.source === "combined");
-        if (filter === "BUY") return trades.filter((t) => t.direction === "BUY");
-        if (filter === "SELL") return trades.filter((t) => t.direction === "SELL");
-        return trades;
-      }
-
-      function renderPaperTable(trades) {
-        if (!trades || trades.length === 0) {
-          $("paper-table-host").innerHTML = '<div class="empty">Sem paper trades ainda.</div>';
-          return;
-        }
-        const rows = trades.map((t) => {
-          return `
-            <tr>
-              <td>#${t.id}</td>
-              <td>${fmtTime(t.created_at)}</td>
-              <td>${fmt(t.pair, "—")} <span style="color:var(--muted)">${fmt(t.timeframe, "")}</span></td>
-              <td>${pill(t.direction)}</td>
-              <td>${fmtNumber(t.entry_price, 5)}</td>
-              <td>${fmtNumber(t.simulated_sl, 5)}<br><span style="color:var(--muted);font-size:11px;">${fmtNumber(t.sl_pips, 1)} pips</span></td>
-              <td>${fmtNumber(t.simulated_tp, 5)}<br><span style="color:var(--muted);font-size:11px;">${fmtNumber(t.tp_pips, 1)} pips</span></td>
-              <td><span class="pill ${t.status}">${t.status}</span></td>
-              <td>${t.result_pips != null ? fmtNumber(t.result_pips, 1) + " pips" : "—"}</td>
-              <td>${t.result_r_multiple != null ? fmtNumber(t.result_r_multiple, 2) + "R" : "—"}</td>
-              <td><span style="color:var(--muted);font-size:11px;">${escapeHtml(t.source || "")}</span></td>
-            </tr>
-          `;
-        }).join("");
-
-        $("paper-table-host").innerHTML = `
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Criado</th>
-                <th>Par</th>
-                <th>Direção</th>
-                <th>Entrada</th>
-                <th>SL</th>
-                <th>TP</th>
-                <th>Estado</th>
-                <th>Pips</th>
-                <th>R</th>
-                <th>Origem</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        `;
-      }
-
-      function gateValue(gate) {
-        if (!gate || gate.value === null || gate.value === undefined) return "n/a";
-        return `${gate.value}${gate.value_unit || ""}`;
-      }
-
-      function renderGates(snapshot, history) {
-        const statusEl = $("gates-status");
-        const gridEl = $("gates-grid");
-        const splitsEl = $("gates-splits");
-        const historyEl = $("gates-history");
-
-        if (!snapshot || !snapshot.overall) {
-          statusEl.textContent = "sem dados";
-          statusEl.className = "gate-status partial";
-          gridEl.innerHTML = '<div class="empty">Sem snapshot de gates. Corre `python scripts/check_gates.py`.</div>';
-          splitsEl.innerHTML = "";
-          historyEl.innerHTML = "";
-          return;
-        }
-
-        const overall = snapshot.overall;
-        const metrics = overall.metrics || {};
-        const status = overall.status || "partial";
-        statusEl.textContent = status.replace("_", "-");
-        statusEl.className = `gate-status ${status}`;
-
-        const gates = Array.isArray(overall.gates) ? overall.gates : [];
-        gridEl.innerHTML = gates.map((g) => {
-          const state = g.insufficient_data ? "insufficient" : (g.pass ? "pass" : "fail");
-          const mark = g.insufficient_data ? "?" : (g.pass ? "ok" : "fail");
-          return `
-            <div class="gate-row ${state}">
-              <span class="label">${escapeHtml(g.label || g.name || "gate")}</span>
-              <span class="value ${state}">${escapeHtml(mark)} · ${escapeHtml(gateValue(g))}</span>
-            </div>
-          `;
-        }).join("") || '<div class="empty">Sem gates no snapshot.</div>';
-
-        const splitCards = [];
-        const bySource = snapshot.by_source || {};
-        Object.keys(bySource).forEach((key) => {
-          const data = bySource[key] || {};
-          const m = data.metrics || {};
-          const n = (m.wins || 0) + (m.losses || 0) + (m.expired || 0);
-          splitCards.push({ label: key, status: data.status, n, wr: m.win_rate, pf: m.profit_factor, r: m.avg_r });
-        });
-        const byDirection = snapshot.by_direction || {};
-        Object.keys(byDirection).forEach((key) => {
-          const data = byDirection[key] || {};
-          const m = data.metrics || {};
-          const n = (m.wins || 0) + (m.losses || 0) + (m.expired || 0);
-          splitCards.push({ label: key, status: data.status, n, wr: m.win_rate, pf: m.profit_factor, r: m.avg_r });
-        });
-
-        splitsEl.innerHTML = splitCards.map((s) => `
-          <div class="split-card">
-            <div class="split-label">${escapeHtml(s.label)}</div>
-            <div>${escapeHtml(s.status || "partial")} · n=${s.n}</div>
-            <div class="split-stats">WR=${fmt(s.wr, "—")}% · PF=${fmt(s.pf, "—")} · R=${fmt(s.r, "—")}</div>
-          </div>
-        `).join("");
-
-        const closedTotal = (metrics.wins || 0) + (metrics.losses || 0) + (metrics.expired || 0);
-        const checked = fmtTime(snapshot.checked_at);
-        const historyCount = Array.isArray(history) ? history.length : 0;
-        historyEl.innerHTML = `Último check: ${escapeHtml(checked)} · trades fechados: ${closedTotal} · histórico exportado: ${historyCount}`;
-      }
-
-      function applyPaperFilter(filter) {
-        paperFilter = filter;
-        document.querySelectorAll("#paper-filters button").forEach((btn) => {
-          btn.classList.toggle("active", btn.dataset.filter === filter);
-        });
-        renderPaperCards(lastPaperSummary, filter);
-        renderPaperTable(filterPaperTrades(lastPaperTrades, filter));
-      }
-
-      function buildKv(rows) {
-        return `<div class="kv">${rows.map(([k, v]) => `<div class="k">${escapeHtml(k)}</div><div class="v">${v == null || v === "" ? "—" : v}</div>`).join("")}</div>`;
-      }
-
-      function openDecisionModal(d) {
-        if (!d) return;
-        const features = d.ai_features_snapshot || {};
-        const aiAnalysisText = d.ai_analysis_text || d.ai_reason || "Análise IA não disponível para esta decisão.";
-        const aiConfidence = features.ai_confidence ?? d.confidence ?? 0;
-        const featuresEntries = Object.entries(features).filter(([k]) => k !== "recent_candles");
-        const featuresHtml = featuresEntries.length
-          ? `<div class="features-grid">${featuresEntries.map(([k, v]) => {
-              let display = v;
-              if (typeof v === "number") display = fmtNumber(v, 5);
-              if (v == null || v === "") display = "—";
-              return `<div><span style="color:var(--muted);">${escapeHtml(k)}:</span> ${escapeHtml(display)}</div>`;
-            }).join("")}</div>`
-          : '<div style="color:var(--muted);font-size:12px;">Sem snapshot de features.</div>';
-
-        const candlesHtml = (features.recent_candles && features.recent_candles.length)
-          ? `<pre class="candles">${escapeHtml(JSON.stringify(features.recent_candles, null, 2))}</pre>`
-          : "";
-
-        const gates = d.gate_diagnostics || {};
-        const gateContext = gates.context || {};
-        const gateConfig = gates.config || {};
-        const marketGate = gateContext.market || {};
-        const cooldownGate = gateContext.cooldown || {};
-        const eventGate = gateContext.event || {};
-        const paper = d.paper_trade;
-        const paperSection = paper
-          ? `<section class="modal-section">
-              <h4>Paper trade associada (#${paper.id})</h4>
-              ${buildKv([
-                ["Direção", pill(paper.direction)],
-                ["Estado", `<span class="pill ${paper.status}">${paper.status}</span>`],
-                ["Entrada", fmtNumber(paper.entry_price, 5)],
-                ["SL", `${fmtNumber(paper.simulated_sl, 5)} (${fmtNumber(paper.sl_pips, 1)} pips)`],
-                ["TP", `${fmtNumber(paper.simulated_tp, 5)} (${fmtNumber(paper.tp_pips, 1)} pips)`],
-                ["ATR usada", paper.atr_pips != null ? `${fmtNumber(paper.atr_pips, 1)} pips` : "—"],
-                ["Criado", fmtTime(paper.created_at)],
-                ["Expira em", fmtTime(paper.expiry_at)],
-                ["Resultado", paper.result_pips != null ? `${fmtNumber(paper.result_pips, 1)} pips` : "—"],
-                ["R-multiple", paper.result_r_multiple != null ? `${fmtNumber(paper.result_r_multiple, 2)}R` : "—"],
-                ["Razão fecho", escapeHtml(paper.close_reason || "")],
-                ["Origem do sinal", escapeHtml(paper.source || "—")],
-              ])}
-            </section>`
-          : "";
-
-        const html = `
-          <section class="modal-section">
-            <h4>Análise da IA</h4>
-            <p class="ai-analysis-text">${escapeHtml(aiAnalysisText)}</p>
-          </section>
-
-          <section class="modal-section">
-            <h4>Decisão IA</h4>
-            ${buildKv([
-              ["Sinal IA", `${pill(d.ai_signal)} ${scoreBar(d.ai_score)}`],
-              ["Bias IA", `${pill(d.ai_bias || d.ai_signal)} ${scoreBar(d.ai_score)}`],
-              ["Ajuste confiança IA", fmtScore(d.ai_confidence_adjustment)],
-              ["Ajuste risco IA", fmtScore(d.ai_risk_adjustment)],
-              ["Macro", escapeHtml(d.macro_context || "")],
-              ["Sentimento notícias", escapeHtml(d.news_sentiment || "")],
-              ["Volatilidade contexto", escapeHtml(d.volatility_context || "")],
-              ["Razão contextual", escapeHtml(d.ai_context_reason || "")],
-              ["Score IA", fmtScore(d.ai_score)],
-              ["Confiança IA", `${aiConfidence}% (score ${fmtScore(d.ai_confidence_score)})`],
-              ["Modelo", escapeHtml(d.ai_model_version)],
-            ])}
-          </section>
-
-          <section class="modal-section">
-            <h4>Features snapshot</h4>
-            ${featuresHtml}
-            ${candlesHtml}
-          </section>
-
-          <section class="modal-section">
-            <h4>Análise técnica</h4>
-            ${buildKv([
-              ["Multi-TF", `${pill(signalFromScore(d.multi_timeframe_score ?? d.technical_score))} ${scoreBar(d.multi_timeframe_score ?? d.technical_score)}`],
-              ["M15", `${pill(signalFromScore(d.technical_score_m15))} ${scoreBar(d.technical_score_m15)}`],
-              ["H1", `${pill(signalFromScore(d.technical_score_h1 ?? d.technical_score))} ${scoreBar(d.technical_score_h1 ?? d.technical_score)}`],
-              ["H4", `${pill(signalFromScore(d.technical_score_h4))} ${scoreBar(d.technical_score_h4)}`],
-              ["D1", `${pill(signalFromScore(d.technical_score_d1))} ${scoreBar(d.technical_score_d1)}`],
-              ["Alinhamento", escapeHtml(d.timeframe_alignment || "")],
-              ["Bloqueio timeframe", escapeHtml(d.timeframe_block_reason || "")],
-              ["RSI", `${fmtNumber(d.rsi_value, 1)} (${escapeHtml(d.rsi_vote)})`],
-              ["EMA", `EMA20=${fmtNumber(d.ema20_value, 5)} / EMA50=${fmtNumber(d.ema50_value, 5)} (${escapeHtml(d.ema_vote)})`],
-              ["MACD", `MACD=${fmtNumber(d.macd_value, 5)} / signal=${fmtNumber(d.macd_signal_value, 5)} (${escapeHtml(d.macd_vote)})`],
-              ["ADX", d.adx_value != null ? fmtNumber(d.adx_value, 1) : "—"],
-              ["Razão técnica", escapeHtml(d.technical_reason)],
-            ])}
-          </section>
-
-          <section class="modal-section">
-            <h4>Análise shadow</h4>
-            ${buildKv([
-              ["Shadow técnico", `${pill(d.shadow_technical_signal)} ${scoreBar(d.shadow_score)}`],
-              ["Confiança shadow", d.shadow_technical_confidence != null ? `${d.shadow_technical_confidence}%` : "—"],
-              ["Razão shadow", escapeHtml(d.shadow_technical_reason)],
-              ["Shadow combinado", `${pill(d.shadow_combined_signal)} (${d.shadow_combined_confidence ?? 0}%)`],
-              ["Razão shadow combinado", escapeHtml(d.shadow_combined_reason)],
-            ])}
-          </section>
-
-          <section class="modal-section">
-            <h4>Decisão final</h4>
-            ${buildKv([
-              ["Sinal combinado (estrito)", `${pill(d.combined_signal)} ${scoreBar(d.combined_score)}`],
-              ["Sinal por score", pill(d.score_combined_signal || "NEUTRAL")],
-              ["Modo de gating", `<span style="color:var(--muted);">${escapeHtml(d.gating_mode || "strict")}</span>`],
-              ["Sinal de gating efectivo", `${pill(d.gating_signal || d.combined_signal)} (${d.gating_confidence ?? d.confidence ?? 0}%)`],
-              ["Modo operacional", escapeHtml(d.operational_mode || "")],
-              ["Janela operacional", d.operational_can_trade ? '<span class="pill allowed">permitida</span>' : `<span class="pill blocked">${escapeHtml(d.operational_block_reason || "bloqueada")}</span>`],
-              ["Trade", d.trade_allowed ? '<span class="pill allowed">simulado</span>' : '<span class="pill blocked">bloqueado</span>'],
-              ["Razão combinado", escapeHtml(d.combined_reason)],
-              ["Bloqueio", escapeHtml(d.blocking_reason || d.block_reason || "")],
-              ["ATR", d.atr_pips != null ? `${fmtNumber(d.atr_pips, 1)} pips (${d.volatility_level})` : "—"],
-              ["Preço", fmtNumber(d.current_price, 5)],
-              ["Timestamp", fmtTime(d.timestamp)],
-              ["Evento próximo", d.dangerous_event_nearby ? `<span class="pill event">evento</span> ${escapeHtml(d.dangerous_event_reason || "")}` : "não"],
-            ])}
-          </section>
-
-          <section class="modal-section">
-            <h4>Gate Diagnostics</h4>
-            ${buildKv([
-              ["Mercado", marketGate.is_open === false ? `<span class="pill blocked">fechado</span> ${escapeHtml(marketGate.gate || "")}` : '<span class="pill allowed">aberto</span>'],
-              ["BUY permitido", gateConfig.allow_buy === false ? "não" : "sim"],
-              ["SELL permitido", gateConfig.allow_sell === false ? "não" : "sim"],
-              ["ATR", d.atr_pips != null ? `${fmtNumber(d.atr_pips, 1)} pips / min ${fmtNumber(gateConfig.min_atr_pips, 1)}` : "—"],
-              ["ADX", d.adx_value != null ? `${fmtNumber(d.adx_value, 1)} / min ${fmtNumber(gateConfig.min_adx, 1)}` : "—"],
-              ["RSI", `${fmtNumber(d.rsi_value, 1)} / BUY min ${fmtNumber(gateConfig.buy_min_rsi, 1)} / SELL max ${fmtNumber(gateConfig.sell_max_rsi, 1)}`],
-              ["EMA direction", d.ema20_value > d.ema50_value ? "EMA20 > EMA50" : "EMA20 < EMA50"],
-              ["Cooldown", cooldownGate.cooldown_active || cooldownGate.max_direction_signals_reached ? `<span class="pill blocked">${escapeHtml(cooldownGate.reason || "ativo")}</span>` : "inativo"],
-              ["Evento bloqueante", eventGate.dangerous_event_nearby ? escapeHtml(eventGate.dangerous_event_reason || "high_impact_event_nearby") : "não"],
-              ["AI status", escapeHtml(d.ai_status || "ok")],
-              ["Technical score", fmtScore(d.technical_score)],
-              ["Combined score", fmtScore(d.combined_score)],
-              ["Motivo bloqueio", escapeHtml(d.blocking_reason || d.block_reason || "")],
-              ["Motivo NEUTRAL", escapeHtml(d.neutral_reason || "")],
-            ])}
-          </section>
-
-          ${paperSection}
-        `;
-
-        $("modal-title").textContent = `Detalhes — ${d.pair} ${d.timeframe || ""} ${fmtTime(d.timestamp)}`;
-        $("modal-body").innerHTML = html;
-        $("modal-backdrop").classList.add("open");
-      }
-
-      function closeModal() {
-        $("modal-backdrop").classList.remove("open");
-      }
-
-      $("modal-close").addEventListener("click", closeModal);
-      $("modal-backdrop").addEventListener("click", (e) => {
-        if (e.target === $("modal-backdrop")) closeModal();
+  function groupedBarChart(labels, groups) {
+    if (!labels || labels.length === 0) return emptyChart();
+    const W = 300, H = 120, FOOT = 14;
+    const ng = groups.length, nb = labels.length;
+    const gw = W / nb;
+    const bw = Math.max(3, (gw / (ng + 0.5)) * 0.8);
+    const allVals = groups.flatMap(g => g.values);
+    const mx = Math.max(...allVals, 1);
+    let bars = "";
+    groups.forEach((g, gi) => {
+      g.values.forEach((v, bi) => {
+        const bh = Math.max(2, (v / mx) * (H - 10));
+        const x = bi * gw + gi * (bw + 1) + (gw - ng * bw - (ng - 1)) / 2;
+        const y = H - bh;
+        bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw}" height="${bh.toFixed(1)}" fill="${g.color}" rx="1"/>`;
       });
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") closeModal();
-      });
+    });
+    const axis = labels.map((l, i) => {
+      const x = (i + 0.5) * gw;
+      return `<text x="${x.toFixed(1)}" y="${H + FOOT - 2}" fill="#8a93a3" font-size="9" text-anchor="middle">${esc(String(l))}</text>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${W} ${H + FOOT}" style="width:100%;height:100%;">${bars}${axis}</svg>`;
+  }
 
-      document.querySelectorAll("#paper-filters button").forEach((btn) => {
-        btn.addEventListener("click", () => applyPaperFilter(btn.dataset.filter));
-      });
+  function donutChart(slices) {
+    const total = (slices || []).reduce((s, x) => s + (x.value || 0), 0);
+    if (!total) return emptyChart();
+    const cx = 60, cy = 60, R = 48, ri = 30;
+    let ang = -Math.PI / 2;
+    const paths = slices.map(sl => {
+      const sw = (sl.value / total) * 2 * Math.PI;
+      const ea = ang + sw;
+      const x1 = cx + R * Math.cos(ang), y1 = cy + R * Math.sin(ang);
+      const x2 = cx + R * Math.cos(ea), y2 = cy + R * Math.sin(ea);
+      const ix1 = cx + ri * Math.cos(ang), iy1 = cy + ri * Math.sin(ang);
+      const ix2 = cx + ri * Math.cos(ea), iy2 = cy + ri * Math.sin(ea);
+      const lg = sw > Math.PI ? 1 : 0;
+      const d = `M${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 ${lg} 1 ${x2.toFixed(1)},${y2.toFixed(1)} L${ix2.toFixed(1)},${iy2.toFixed(1)} A${ri},${ri} 0 ${lg} 0 ${ix1.toFixed(1)},${iy1.toFixed(1)}Z`;
+      ang = ea;
+      return `<path d="${d}" fill="${sl.color}"/>`;
+    }).join("");
+    const legend = slices.map((sl, i) => {
+      const y = 16 + i * 20;
+      return `<rect x="135" y="${y}" width="8" height="8" rx="2" fill="${sl.color}"/>
+               <text x="147" y="${y+7}" fill="#e6e9ef" font-size="10">${esc(sl.label)} (${sl.value})</text>`;
+    }).join("");
+    return `<svg viewBox="0 0 250 130" style="width:100%;height:100%;">
+      ${paths}
+      <circle cx="${cx}" cy="${cy}" r="${ri-2}" fill="var(--panel)"/>
+      <text x="${cx}" y="${cy+4}" text-anchor="middle" fill="var(--muted)" font-size="11">${total}</text>
+      ${legend}
+    </svg>`;
+  }
 
-      async function load() {
-        try {
-          const res = await fetch(DATA_URL + "?_=" + Date.now(), { cache: "no-store" });
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          const payload = await res.json();
-          const summary = payload.summary || {};
-          const decisions = Array.isArray(payload.decisions) ? payload.decisions : [];
-          const paperTrades = Array.isArray(payload.paper_trades) ? payload.paper_trades : [];
-          const paperSummary = payload.paper_trade_summary || { all: {} };
-          const calibration = payload.calibration || {};
-          const gatesSnapshot = payload.gates_check || null;
-          const gatesHistory = Array.isArray(payload.gates_history) ? payload.gates_history : [];
+  function horizBars(labels, values, color) {
+    if (!labels || !labels.length) return emptyChart();
+    const W = 300, ROW = 22;
+    const H = labels.length * ROW + 4;
+    const mx = Math.max(...values, 1);
+    const rows = labels.map((l, i) => {
+      const bw = (values[i] / mx) * 160;
+      const y = i * ROW + 2;
+      return `<text x="0" y="${y+12}" fill="#8a93a3" font-size="9">${esc(String(l).substring(0, 24))}</text>
+               <rect x="175" y="${y+2}" width="${bw.toFixed(1)}" height="12" fill="${color}" rx="2"/>
+               <text x="${(175+bw+3).toFixed(1)}" y="${y+12}" fill="#e6e9ef" font-size="9">${values[i]}</text>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;">${rows}</svg>`;
+  }
 
-          lastDecisions = decisions;
-          lastPaperTrades = paperTrades;
-          lastPaperSummary = paperSummary;
+  /* ── DASHBOARD ── */
+  function renderDashboard(data) {
+    const s = data.summary || {};
+    const cal = data.calibration || {};
+    const agg = data.ai_aggregator_analysis || {};
+    const gates = data.gates_check || {};
+    const decisions = data.decisions || [];
 
-          renderCards(summary);
-          renderCalibration(calibration);
-          renderTable(decisions);
-          applyPaperFilter(paperFilter);
-          renderGates(gatesSnapshot, gatesHistory);
+    // KPI Row 1
+    const wr = cal.winrate != null ? parseFloat(cal.winrate) : null;
+    const np = cal.net_pips;
+    const pf = cal.profit_factor;
+    const ex = cal.expectancy;
+    $("kpi-row1").innerHTML = [
+      { label: "Total Decisões",    value: s.total ?? 0,              color: "blue" },
+      { label: "Trades Executados", value: s.allowed ?? 0,            color: "green", sub: `bloqueados: ${s.blocked ?? 0}` },
+      { label: "Winrate",           value: wr != null ? wr + "%" : "—", color: wr != null ? (wr >= 50 ? "green" : "red") : "", sub: `W ${cal.wins ?? 0} / L ${cal.losses ?? 0}` },
+      { label: "Net Pips",          value: np != null ? fmtN(np, 1) : "—", color: np != null ? (np >= 0 ? "green" : "red") : "" },
+      { label: "Profit Factor",     value: pf != null ? fmtN(pf, 2) : "—", color: pf != null ? (pf >= 1 ? "green" : "red") : "" },
+      { label: "Expectancy",        value: ex != null ? fmtN(ex, 2) : "—", color: ex != null ? (ex >= 0 ? "green" : "red") : "" },
+      { label: "Confiança Média",   value: s.average_confidence != null ? s.average_confidence + "%" : "—", color: "blue" },
+    ].map(c => `<div class="kpi-card ${c.color||""}">
+      <div class="kpi-label">${c.label}</div>
+      <div class="kpi-value ${c.color||""}">${c.value}</div>
+      ${c.sub ? `<div class="kpi-sub">${c.sub}</div>` : ""}
+    </div>`).join("");
 
-          $("generated").textContent = "atualizado " + fmtTime(summary.generated_at);
-          $("source").textContent = "fonte: " + (summary.source || "—");
-          $("error").style.display = "none";
-        } catch (err) {
-          const banner = $("error");
-          banner.textContent =
-            "Falha ao carregar data.json — corre `python scripts/export_logs.py` (" +
-            err.message +
-            ")";
-          banner.style.display = "block";
-        }
+    // Status Row 2
+    const dangerDec = decisions.slice().reverse().find(d => d.dangerous_event_nearby);
+    const mktGate = (gates.overall?.gates || []).find(g => (g.label || g.name || "").toLowerCase().includes("market") || (g.label || g.name || "").toLowerCase().includes("mercado"));
+    const mktOpen = mktGate ? (mktGate.pass ? "Aberto" : "Fechado") : "—";
+    const aggOk = agg.available === true;
+    const dpn = (cal.direction_net_pips || {});
+    $("kpi-row2").innerHTML = [
+      { label: "Melhor Direção",       value: esc(cal.best_direction || "—"), sub: `BUY ${fmtN(dpn.BUY, 1)} / SELL ${fmtN(dpn.SELL, 1)} pips` },
+      { label: "Taxa de Bloqueio",     value: cal.block_rate != null ? cal.block_rate + "%" : "—", sub: `${cal.total_blocked ?? 0} de ${cal.total_decisions ?? 0}` },
+      { label: "Top Motivo Bloqueio",  value: esc(cal.top_block_reason || "—") },
+      { label: "Evento Perigoso",      value: dangerDec ? `<span style="color:var(--sell)">Sim</span>` : "Nenhum", sub: dangerDec ? esc((dangerDec.dangerous_event_reason || "").substring(0, 40)) : "" },
+      { label: "IA Agregadora",        value: `<span style="color:${aggOk ? "var(--buy)" : "var(--muted)"}">${aggOk ? "Ativa" : (agg.available === false ? "Inativa" : "—")}</span>`, sub: esc((agg.recommendation || "").substring(0, 40)) },
+      { label: "Estado Mercado",       value: mktOpen },
+    ].map(c => `<div class="status-card">
+      <div class="s-label">${c.label}</div>
+      <div class="s-value">${c.value}</div>
+      ${c.sub ? `<div class="s-sub">${c.sub}</div>` : ""}
+    </div>`).join("");
+
+    // Charts
+    const pt = data.paper_trades || [];
+    const closed = pt.filter(t => t.result_pips != null && (t.status === "win" || t.status === "loss"))
+      .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+    let cum = 0;
+    const pipsSeries = closed.length ? closed.map(t => { cum += (t.result_pips || 0); return cum; }) : [0, np || 0];
+
+    const dayMap = {};
+    pt.forEach(t => {
+      if (!t.created_at) return;
+      const day = fmtDate(t.created_at).slice(5);
+      if (!dayMap[day]) dayMap[day] = { w: 0, l: 0 };
+      if (t.status === "win") dayMap[day].w++;
+      if (t.status === "loss") dayMap[day].l++;
+    });
+    const days = Object.keys(dayMap).sort().slice(-8);
+
+    const bvs = cal.buy_vs_sell || {};
+    const buyC = s.buy || 0, sellC = s.sell || 0, neutC = s.neutral || 0;
+    const blkMap = cal.blocked_by_reason || {};
+    const blkLabels = Object.keys(blkMap).slice(0, 6);
+    const blkVals = blkLabels.map(k => blkMap[k]);
+
+    const pipsColor = (pipsSeries[pipsSeries.length - 1] || 0) >= 0 ? "#2ec27e" : "#ed4245";
+
+    $("charts-row").innerHTML = `
+      <div class="chart-card">
+        <div class="chart-title">Evolução Net Pips</div>
+        <div class="chart-wrap">${lineChart(pipsSeries, pipsColor)}</div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Win / Loss por Dia</div>
+        <div class="chart-wrap">${days.length ? groupedBarChart(days, [
+          { values: days.map(d => dayMap[d].w), color: "#2ec27e" },
+          { values: days.map(d => dayMap[d].l), color: "#ed4245" },
+        ]) : emptyChart("Sem trades fechados")}</div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">BUY vs SELL</div>
+        <div class="chart-wrap">${donutChart([
+          { label: "BUY", value: buyC, color: "#2ec27e" },
+          { label: "SELL", value: sellC, color: "#ed4245" },
+          { label: "NEUTRAL", value: neutC, color: "#8a93a3" },
+        ])}</div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Razões de Bloqueio</div>
+        <div class="chart-wrap" style="height:${Math.max(140, blkLabels.length * 22 + 10)}px;">
+          ${horizBars(blkLabels, blkVals, "#f5a623")}
+        </div>
+      </div>
+    `;
+  }
+
+  /* ── DECISIONS ── */
+  function filterDec(list, filter, search) {
+    let r = list.slice();
+    if (filter === "BUY") r = r.filter(d => d.combined_signal === "BUY");
+    else if (filter === "SELL") r = r.filter(d => d.combined_signal === "SELL");
+    else if (filter === "NEUTRAL") r = r.filter(d => d.combined_signal === "NEUTRAL");
+    else if (filter === "executed") r = r.filter(d => d.trade_allowed);
+    else if (filter === "blocked") r = r.filter(d => !d.trade_allowed);
+    if (search) {
+      const q = search.toLowerCase();
+      r = r.filter(d =>
+        (d.pair || "").toLowerCase().includes(q) ||
+        (d.blocking_reason || d.block_reason || "").toLowerCase().includes(q) ||
+        (d.combined_signal || "").toLowerCase().includes(q) ||
+        (d.ai_signal || "").toLowerCase().includes(q)
+      );
+    }
+    return r;
+  }
+
+  function renderDecTable() {
+    const rev = _decisions.slice().reverse();
+    const filtered = filterDec(rev, decSt.filter, decSt.search);
+    const totalPg = Math.max(1, Math.ceil(filtered.length / PG));
+    if (decSt.page > totalPg) decSt.page = totalPg;
+    const pg = filtered.slice((decSt.page - 1) * PG, decSt.page * PG);
+
+    if (!pg.length) {
+      $("dec-table-host").innerHTML = '<div class="empty-state">Sem resultados para os filtros seleccionados.</div>';
+      $("dec-pages").style.display = "none";
+      return;
+    }
+
+    const rows = pg.map(d => {
+      const ridx = rev.indexOf(d);
+      const ev = d.dangerous_event_nearby ? `<span class="pill event" title="${esc(d.dangerous_event_reason||"")}">evt</span> ` : "";
+      const tc = d.trade_allowed ? '<span class="pill allowed">exec</span>' : '<span class="pill blocked">bloq</span>';
+      const pb = d.paper_trade ? ` <span class="pill ${d.paper_trade.status}">${d.paper_trade.status}</span>` : "";
+      return `<tr>
+        <td style="color:var(--muted);font-size:11px;">${fmtTime(d.timestamp)}</td>
+        <td><b>${esc(d.pair||"—")}</b><span style="color:var(--muted);font-size:10px;margin-left:4px;">${esc(d.timeframe||"")}</span></td>
+        <td>${pill(d.ai_bias||d.ai_signal)} <span style="color:var(--muted);font-size:10px;">${fmtScore(d.ai_score)}</span></td>
+        <td>${scorePill(d.multi_timeframe_score??d.technical_score)}</td>
+        <td>${pill(d.combined_signal)} <span style="color:var(--muted);font-size:10px;">${fmtScore(d.combined_score)}</span></td>
+        <td>${d.confidence??0}%</td>
+        <td>${ev}${tc}${pb}</td>
+        <td class="wrap">${esc(d.trade_allowed ? "" : (d.blocking_reason||d.block_reason||""))}</td>
+        <td>${fmtN(d.current_price,5)}</td>
+        <td><span class="vol-${d.volatility_level||"unknown"}">${fmtN(d.atr_pips,1)}</span></td>
+        <td><button class="fp" style="padding:2px 8px;font-size:10px;" data-ri="${ridx}">▶</button></td>
+      </tr>`;
+    }).join("");
+
+    $("dec-table-host").innerHTML = `<table class="dt"><thead><tr>
+      <th>Data UTC</th><th>Par</th><th>IA</th><th>Técnico</th>
+      <th>Combinado</th><th>Conf</th><th>Trade</th><th>Motivo</th>
+      <th>Preço</th><th>ATR</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+
+    $$("[data-ri]", $("dec-table-host")).forEach(btn => {
+      btn.addEventListener("click", () => openModal(rev[Number(btn.dataset.ri)]));
+    });
+    renderPg("dec-pages", decSt, totalPg, renderDecTable);
+  }
+
+  /* ── PAPER TRADES ── */
+  function filterPaper(list, f) {
+    if (f === "all") return list;
+    if (f === "BUY") return list.filter(t => t.direction === "BUY");
+    if (f === "SELL") return list.filter(t => t.direction === "SELL");
+    if (f === "win") return list.filter(t => t.status === "win");
+    if (f === "loss") return list.filter(t => t.status === "loss");
+    if (f === "expired") return list.filter(t => t.status === "expired");
+    return list;
+  }
+
+  function renderPaperKpi(data) {
+    const ps = (data.paper_trade_summary || {}).all || {};
+    let peak = 0, dd = 0, cum2 = 0;
+    (data.paper_trades || []).filter(t => t.result_pips != null)
+      .sort((a,b) => new Date(a.created_at||0)-new Date(b.created_at||0))
+      .forEach(t => { cum2 += t.result_pips; peak = Math.max(peak, cum2); dd = Math.min(dd, cum2-peak); });
+    $("paper-kpi").innerHTML = [
+      { label: "Total Trades",   value: ps.total ?? 0 },
+      { label: "Winrate",        value: ps.win_rate != null ? ps.win_rate+"%" : "—", color: (ps.win_rate||0) >= 50 ? "green" : "red" },
+      { label: "Profit Factor",  value: ps.profit_factor != null ? fmtN(ps.profit_factor,2) : "—", color: (ps.profit_factor||0) >= 1 ? "green" : "red" },
+      { label: "Avg R",          value: ps.avg_r != null ? fmtN(ps.avg_r,2) : "—", color: (ps.avg_r||0) >= 0 ? "green" : "red" },
+      { label: "Avg Pips",       value: ps.avg_pips != null ? fmtN(ps.avg_pips,1) : "—" },
+      { label: "Max Drawdown",   value: dd !== 0 ? fmtN(dd,1)+" p" : "—", color: dd < 0 ? "red" : "" },
+    ].map(c => `<div class="kpi-card ${c.color||""}">
+      <div class="kpi-label">${c.label}</div>
+      <div class="kpi-value ${c.color||""}">${c.value}</div>
+    </div>`).join("");
+  }
+
+  function renderPaperTable() {
+    const rev = _paperTrades.slice().reverse();
+    const filtered = filterPaper(rev, paperSt.filter);
+    const totalPg = Math.max(1, Math.ceil(filtered.length / PG));
+    if (paperSt.page > totalPg) paperSt.page = totalPg;
+    const pg = filtered.slice((paperSt.page - 1) * PG, paperSt.page * PG);
+
+    if (!pg.length) {
+      $("paper-table-host").innerHTML = '<div class="empty-state">Sem paper trades para os filtros seleccionados.</div>';
+      $("paper-pages").style.display = "none";
+      return;
+    }
+
+    const rows = pg.map(t => `<tr>
+      <td style="color:var(--muted);">#${t.id}</td>
+      <td style="color:var(--muted);font-size:11px;">${fmtTime(t.created_at)}</td>
+      <td><b>${esc(t.pair||"—")}</b></td>
+      <td>${pill(t.direction)}</td>
+      <td>${fmtN(t.entry_price,5)}</td>
+      <td>${fmtN(t.simulated_sl,5)}<span style="color:var(--muted);font-size:10px;"> ${fmtN(t.sl_pips,1)}p</span></td>
+      <td>${fmtN(t.simulated_tp,5)}<span style="color:var(--muted);font-size:10px;"> ${fmtN(t.tp_pips,1)}p</span></td>
+      <td><span class="pill ${t.status}">${t.status}</span></td>
+      <td style="color:${t.result_pips>=0?"var(--buy)":"var(--sell)"};">${t.result_pips!=null?fmtN(t.result_pips,1)+" p":"—"}</td>
+      <td>${t.result_r_multiple!=null?fmtN(t.result_r_multiple,2)+"R":"—"}</td>
+      <td style="color:var(--muted);font-size:10px;">${esc(t.source||"")}</td>
+    </tr>`).join("");
+
+    $("paper-table-host").innerHTML = `<table class="dt"><thead><tr>
+      <th>ID</th><th>Data</th><th>Par</th><th>Dir</th>
+      <th>Entrada</th><th>SL</th><th>TP</th>
+      <th>Estado</th><th>Pips</th><th>R</th><th>Origem</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+    renderPg("paper-pages", paperSt, totalPg, renderPaperTable);
+  }
+
+  /* ── AGGREGATOR ── */
+  function renderAggregator(data) {
+    const agg = data.ai_aggregator_analysis || {};
+    const rec = (agg.recommendation || "").toLowerCase();
+    let bannerCls = "neutral-mode", bannerTxt = "Sem recomendação disponível";
+    if (rec.includes("advisory") || rec.includes("ready") || rec.includes("enable")) {
+      bannerCls = "advisory"; bannerTxt = "✓ IA pronta para advisory";
+    } else if (rec.includes("shadow") || rec.includes("monit") || rec.includes("continuar")) {
+      bannerCls = "shadow"; bannerTxt = "⟳ Continuar em shadow mode";
+    } else if (agg.available) {
+      bannerTxt = esc(agg.recommendation || "IA Agregadora ativa");
+    }
+    $("agg-banner").innerHTML = `<div class="agg-rec ${bannerCls}">${bannerTxt}</div>`;
+
+    const agreement = agg.agreement || {};
+    const agreeN = typeof agreement === "object" ? (agreement.agree ?? 0) : 0;
+    const disagreeN = typeof agreement === "object" ? (agreement.disagree ?? 0) : 0;
+
+    $("agg-kpi").innerHTML = [
+      { label: "Total Avaliações",     value: agg.total_evaluated ?? 0 },
+      { label: "Should Trade: True",   value: agg.should_trade_true ?? 0,  color: "green" },
+      { label: "Should Trade: False",  value: agg.should_trade_false ?? 0, color: "red" },
+      { label: "Concordância",         value: agreeN, color: "green" },
+      { label: "Discordância",         value: disagreeN, color: "red" },
+      { label: "Risk Level",           value: esc(agg.risk_level || "—") },
+    ].map(c => `<div class="kpi-card ${c.color||""}">
+      <div class="kpi-label">${c.label}</div>
+      <div class="kpi-value ${c.color||""}">${c.value}</div>
+    </div>`).join("");
+
+    _aggRows = data.decisions.filter(d => d.ai_aggregated_signal || d.ai_aggregated_status).slice().reverse();
+    let localAgree = 0, localDisagree = 0;
+    _aggRows.forEach(d => {
+      if (d.ai_aggregated_signal && d.combined_signal) {
+        if (d.ai_aggregated_signal === d.combined_signal) localAgree++;
+        else localDisagree++;
       }
+    });
 
-      load();
-      setInterval(load, REFRESH_MS);
-    })();
-  </script>
+    $("agg-charts").innerHTML = `
+      <div class="chart-card">
+        <div class="chart-title">Should Trade</div>
+        <div class="chart-wrap">${donutChart([
+          { label: "True",  value: agg.should_trade_true ?? 0,  color: "#2ec27e" },
+          { label: "False", value: agg.should_trade_false ?? 0, color: "#ed4245" },
+        ])}</div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Concordância IA vs Sinal</div>
+        <div class="chart-wrap">${donutChart([
+          { label: "Concorda",  value: localAgree,    color: "#2ec27e" },
+          { label: "Discorda",  value: localDisagree, color: "#ed4245" },
+        ])}</div>
+      </div>
+    `;
+
+    renderAggTable();
+  }
+
+  function renderAggTable() {
+    const totalPg = Math.max(1, Math.ceil(_aggRows.length / PG));
+    if (aggSt.page > totalPg) aggSt.page = totalPg;
+    const pg = _aggRows.slice((aggSt.page - 1) * PG, aggSt.page * PG);
+
+    if (!pg.length) {
+      $("agg-table-host").innerHTML = '<div class="empty-state">Sem dados do agregador IA. Bot ainda em shadow mode ou sem decisões suficientes.</div>';
+      $("agg-pages").style.display = "none";
+      return;
+    }
+
+    const rows = pg.map(d => {
+      const st = d.ai_aggregated_should_trade;
+      const stCell = st === true ? '<span class="pill allowed">True</span>' : (st === false ? '<span class="pill blocked">False</span>' : "—");
+      const res = d.paper_trade ? `<span class="pill ${d.paper_trade.status}">${d.paper_trade.status}</span>` : "—";
+      return `<tr>
+        <td style="color:var(--muted);font-size:11px;">${fmtTime(d.timestamp)}</td>
+        <td>${pill(d.combined_signal||"NEUTRAL")}</td>
+        <td>${pill(d.ai_signal||"NEUTRAL")}</td>
+        <td>${pill(d.ai_aggregated_signal||"NEUTRAL")}</td>
+        <td>${stCell}</td>
+        <td>${esc(d.ai_aggregated_risk_level||"—")}</td>
+        <td class="wrap">${esc((d.ai_aggregated_warnings||[]).join(", ")||"—")}</td>
+        <td>${res}</td>
+      </tr>`;
+    }).join("");
+
+    $("agg-table-host").innerHTML = `<table class="dt"><thead><tr>
+      <th>Data</th><th>Sinal Técnico</th><th>Sinal IA Fund.</th>
+      <th>Sinal Agregador</th><th>Should Trade</th>
+      <th>Risk Level</th><th>Warnings</th><th>Resultado</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+    renderPg("agg-pages", aggSt, totalPg, renderAggTable);
+  }
+
+  /* ── PAGINATION ── */
+  function renderPg(id, st, total, fn) {
+    const el = $(id);
+    if (total <= 1) { el.style.display = "none"; return; }
+    el.style.display = "flex";
+    el.innerHTML = `
+      <button class="pg-btn" id="${id}-p" ${st.page <= 1 ? "disabled" : ""}>← Anterior</button>
+      <span class="pg-info">Página ${st.page} de ${total}</span>
+      <button class="pg-btn" id="${id}-n" ${st.page >= total ? "disabled" : ""}>Seguinte →</button>
+    `;
+    $(`${id}-p`)?.addEventListener("click", () => { st.page--; fn(); });
+    $(`${id}-n`)?.addEventListener("click", () => { st.page++; fn(); });
+  }
+
+  /* ── FILTERS SETUP ── */
+  function setupFilters() {
+    $$("[data-f]", $("dec-toolbar")).forEach(btn => {
+      btn.addEventListener("click", () => {
+        $$("[data-f]", $("dec-toolbar")).forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        decSt.filter = btn.dataset.f; decSt.page = 1;
+        renderDecTable();
+      });
+    });
+    $("dec-search")?.addEventListener("input", e => {
+      decSt.search = e.target.value; decSt.page = 1; renderDecTable();
+    });
+    $$("[data-f]", $("paper-toolbar")).forEach(btn => {
+      btn.addEventListener("click", () => {
+        $$("[data-f]", $("paper-toolbar")).forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        paperSt.filter = btn.dataset.f; paperSt.page = 1;
+        renderPaperTable();
+      });
+    });
+  }
+
+  /* ── EXPORT ── */
+  function dlCSV(filename, rows) {
+    if (!rows?.length) return;
+    const hdrs = Object.keys(rows[0]);
+    const csv = [hdrs.join(","), ...rows.map(r => hdrs.map(h => {
+      let v = r[h]; if (v == null) v = "";
+      if (typeof v === "object") v = JSON.stringify(v);
+      v = String(v).replace(/"/g, '""');
+      if (/[,"\n]/.test(v)) v = `"${v}"`;
+      return v;
+    }).join(","))].join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    a.download = filename; a.click();
+  }
+  function dlJSON(filename, data) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    a.download = filename; a.click();
+  }
+  function flatDec(d) {
+    return {
+      timestamp: d.timestamp, pair: d.pair, timeframe: d.timeframe,
+      ai_signal: d.ai_signal, ai_score: d.ai_score, ai_bias: d.ai_bias,
+      technical_score: d.technical_score, multi_timeframe_score: d.multi_timeframe_score,
+      combined_signal: d.combined_signal, combined_score: d.combined_score,
+      confidence: d.confidence, trade_allowed: d.trade_allowed,
+      blocking_reason: d.blocking_reason || d.block_reason,
+      current_price: d.current_price, atr_pips: d.atr_pips, volatility_level: d.volatility_level,
+      dangerous_event_nearby: d.dangerous_event_nearby,
+      ai_aggregated_signal: d.ai_aggregated_signal,
+      ai_aggregated_should_trade: d.ai_aggregated_should_trade,
+      ai_aggregated_risk_level: d.ai_aggregated_risk_level,
+    };
+  }
+
+  function setupExport() {
+    $("exp-decisions").querySelector("button").addEventListener("click", () => dlCSV("decisions.csv", _decisions.map(flatDec)));
+    $("exp-paper").querySelector("button").addEventListener("click", () => dlCSV("paper_trades.csv", _paperTrades.map(t => ({
+      id: t.id, created_at: t.created_at, pair: t.pair, direction: t.direction,
+      entry_price: t.entry_price, sl: t.simulated_sl, tp: t.simulated_tp,
+      sl_pips: t.sl_pips, tp_pips: t.tp_pips, status: t.status,
+      result_pips: t.result_pips, result_r: t.result_r_multiple, source: t.source,
+    }))));
+    $("exp-aggregator").querySelector("button").addEventListener("click", () => {
+      const rows = _decisions.filter(d => d.ai_aggregated_signal || d.ai_aggregated_status).map(d => ({
+        timestamp: d.timestamp, pair: d.pair,
+        combined_signal: d.combined_signal, ai_signal: d.ai_signal,
+        ai_aggregated_signal: d.ai_aggregated_signal,
+        ai_aggregated_should_trade: d.ai_aggregated_should_trade,
+        ai_aggregated_risk_level: d.ai_aggregated_risk_level,
+        ai_aggregated_reasoning: d.ai_aggregated_reasoning,
+        ai_aggregated_warnings: (d.ai_aggregated_warnings || []).join("; "),
+        paper_status: d.paper_trade?.status,
+        paper_result_pips: d.paper_trade?.result_pips,
+      }));
+      dlCSV("aggregator.csv", rows);
+    });
+    $("exp-all").querySelector("button").addEventListener("click", () => {
+      const rows = _decisions.map(d => ({
+        ...flatDec(d),
+        paper_id: d.paper_trade?.id, paper_status: d.paper_trade?.status,
+        paper_result_pips: d.paper_trade?.result_pips,
+      }));
+      dlCSV("all_data.csv", rows);
+    });
+    $("exp-json").querySelector("button").addEventListener("click", () => dlJSON("data.json", _data));
+  }
+
+  /* ── MODAL ── */
+  function buildKv(rows) {
+    return `<div class="kv">${rows.map(([k,v]) =>
+      `<div class="k">${esc(k)}</div><div class="v">${v == null || v === "" ? "—" : v}</div>`
+    ).join("")}</div>`;
+  }
+
+  function openModal(d) {
+    if (!d) return;
+    const feats = d.ai_features_snapshot || {};
+    const aiTxt = d.ai_analysis_text || d.ai_reason || "Análise IA não disponível para esta decisão.";
+    const aiConf = feats.ai_confidence ?? d.confidence ?? 0;
+    const featEntries = Object.entries(feats).filter(([k]) => k !== "recent_candles");
+    const featsHtml = featEntries.length
+      ? `<div class="features-grid">${featEntries.map(([k,v]) => {
+          let dsp = v; if (typeof v === "number") dsp = fmtN(v, 5); if (v == null || v === "") dsp = "—";
+          return `<div><span style="color:var(--muted);">${esc(k)}:</span> ${esc(dsp)}</div>`;
+        }).join("")}</div>`
+      : '<div style="color:var(--muted);font-size:12px;">Sem snapshot.</div>';
+    const candlesHtml = feats.recent_candles?.length
+      ? `<pre class="candles">${esc(JSON.stringify(feats.recent_candles, null, 2))}</pre>` : "";
+
+    const gates = d.gate_diagnostics || {};
+    const gctx = gates.context || {}, gcfg = gates.config || {};
+    const mGate = gctx.market || {}, cdGate = gctx.cooldown || {}, evGate = gctx.event || {};
+    const paper = d.paper_trade;
+    const paperSec = paper ? `<div class="modal-section"><h4>Paper Trade #${paper.id}</h4>${buildKv([
+      ["Direção", pill(paper.direction)],
+      ["Estado", `<span class="pill ${paper.status}">${paper.status}</span>`],
+      ["Entrada", fmtN(paper.entry_price, 5)],
+      ["SL", `${fmtN(paper.simulated_sl,5)} (${fmtN(paper.sl_pips,1)} pips)`],
+      ["TP", `${fmtN(paper.simulated_tp,5)} (${fmtN(paper.tp_pips,1)} pips)`],
+      ["ATR usada", paper.atr_pips != null ? `${fmtN(paper.atr_pips,1)} pips` : "—"],
+      ["Criado", fmtTime(paper.created_at)],
+      ["Expira", fmtTime(paper.expiry_at)],
+      ["Resultado", paper.result_pips != null ? `${fmtN(paper.result_pips,1)} pips` : "—"],
+      ["R-multiple", paper.result_r_multiple != null ? `${fmtN(paper.result_r_multiple,2)}R` : "—"],
+      ["Razão fecho", esc(paper.close_reason || "")],
+      ["Origem", esc(paper.source || "—")],
+    ])}</div>` : "";
+
+    const aggSec = d.ai_aggregated_signal ? `<div class="modal-section"><h4>IA Agregadora</h4>${buildKv([
+      ["Sinal agregado", pill(d.ai_aggregated_signal || "NEUTRAL")],
+      ["Should Trade", d.ai_aggregated_should_trade === true ? '<span class="pill allowed">True</span>' : '<span class="pill blocked">False</span>'],
+      ["Risk Level", esc(d.ai_aggregated_risk_level || "—")],
+      ["Score", fmtScore(d.ai_aggregated_score)],
+      ["Confiança", d.ai_aggregated_confidence != null ? d.ai_aggregated_confidence+"%" : "—"],
+      ["Raciocínio", esc(d.ai_aggregated_reasoning || "—")],
+      ["Warnings", esc((d.ai_aggregated_warnings || []).join(", ") || "—")],
+    ])}</div>` : "";
+
+    $("modal-body").innerHTML = `
+      <div class="modal-section"><h4>Análise da IA</h4><p class="ai-analysis-text">${esc(aiTxt)}</p></div>
+      <div class="modal-section"><h4>Decisão IA</h4>${buildKv([
+        ["Sinal IA", `${pill(d.ai_signal)} ${scoreBar(d.ai_score)}`],
+        ["Bias IA", `${pill(d.ai_bias||d.ai_signal)} ${scoreBar(d.ai_score)}`],
+        ["Ajuste confiança", fmtScore(d.ai_confidence_adjustment)],
+        ["Macro", esc(d.macro_context || "")],
+        ["Sentimento", esc(d.news_sentiment || "")],
+        ["Confiança IA", `${aiConf}% (score ${fmtScore(d.ai_confidence_score)})`],
+        ["Modelo", esc(d.ai_model_version)],
+      ])}</div>
+      <div class="modal-section"><h4>Features snapshot</h4>${featsHtml}${candlesHtml}</div>
+      <div class="modal-section"><h4>Análise Técnica</h4>${buildKv([
+        ["Multi-TF", `${pill(sigFromScore(d.multi_timeframe_score??d.technical_score))} ${scoreBar(d.multi_timeframe_score??d.technical_score)}`],
+        ["M15", `${pill(sigFromScore(d.technical_score_m15))} ${scoreBar(d.technical_score_m15)}`],
+        ["H1",  `${pill(sigFromScore(d.technical_score_h1??d.technical_score))} ${scoreBar(d.technical_score_h1??d.technical_score)}`],
+        ["H4",  `${pill(sigFromScore(d.technical_score_h4))} ${scoreBar(d.technical_score_h4)}`],
+        ["D1",  `${pill(sigFromScore(d.technical_score_d1))} ${scoreBar(d.technical_score_d1)}`],
+        ["RSI",  `${fmtN(d.rsi_value,1)} (${esc(d.rsi_vote||"")})`],
+        ["EMA",  `EMA20=${fmtN(d.ema20_value,5)} / EMA50=${fmtN(d.ema50_value,5)} (${esc(d.ema_vote||"")})`],
+        ["MACD", `${fmtN(d.macd_value,5)} / sig=${fmtN(d.macd_signal_value,5)} (${esc(d.macd_vote||"")})`],
+        ["ADX", fmtN(d.adx_value,1)],
+        ["Razão técnica", esc(d.technical_reason)],
+      ])}</div>
+      <div class="modal-section"><h4>Decisão Final</h4>${buildKv([
+        ["Combinado", `${pill(d.combined_signal)} ${scoreBar(d.combined_score)}`],
+        ["Gating signal", `${pill(d.gating_signal||d.combined_signal)} (${d.gating_confidence??d.confidence??0}%)`],
+        ["Trade", d.trade_allowed ? '<span class="pill allowed">simulado</span>' : '<span class="pill blocked">bloqueado</span>'],
+        ["Bloqueio", esc(d.blocking_reason || d.block_reason || "")],
+        ["ATR", d.atr_pips != null ? `${fmtN(d.atr_pips,1)} pips (${d.volatility_level})` : "—"],
+        ["Preço", fmtN(d.current_price, 5)],
+        ["Evento", d.dangerous_event_nearby ? `<span class="pill event">evento</span> ${esc(d.dangerous_event_reason||"")}` : "não"],
+      ])}</div>
+      <div class="modal-section"><h4>Gate Diagnostics</h4>${buildKv([
+        ["Mercado", mGate.is_open === false ? '<span class="pill blocked">fechado</span>' : '<span class="pill allowed">aberto</span>'],
+        ["Cooldown", cdGate.cooldown_active ? `<span class="pill blocked">${esc(cdGate.reason||"ativo")}</span>` : "inativo"],
+        ["Evento bloqueante", evGate.dangerous_event_nearby ? esc(evGate.dangerous_event_reason||"evento") : "não"],
+        ["BUY permitido", gcfg.allow_buy === false ? "não" : "sim"],
+        ["SELL permitido", gcfg.allow_sell === false ? "não" : "sim"],
+      ])}</div>
+      ${aggSec}
+      ${paperSec}
+    `;
+    $("modal-title").textContent = `Detalhes — ${d.pair||""} ${d.timeframe||""} ${fmtTime(d.timestamp)}`;
+    $("modal-backdrop").classList.add("open");
+  }
+
+  function closeModal() { $("modal-backdrop").classList.remove("open"); }
+  $("modal-close").addEventListener("click", closeModal);
+  $("modal-backdrop").addEventListener("click", e => { if (e.target === $("modal-backdrop")) closeModal(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+
+  /* ── LOAD ── */
+  async function load() {
+    try {
+      const res = await fetch(DATA_URL + "?_=" + Date.now(), { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      _data = data;
+      _decisions = Array.isArray(data.decisions) ? data.decisions : [];
+      _paperTrades = Array.isArray(data.paper_trades) ? data.paper_trades : [];
+
+      const s = data.summary || {};
+      $("hd-updated").textContent = "atualizado " + fmtTime(s.generated_at);
+      $("hd-source").textContent = "fonte: " + (s.source || "—");
+      $("error-banner").style.display = "none";
+
+      renderDashboard(data);
+      renderDecTable();
+      renderPaperKpi(data);
+      renderPaperTable();
+      renderAggregator(data);
+    } catch (err) {
+      const b = $("error-banner");
+      b.textContent = "Falha ao carregar data.json — corre `python scripts/export_logs.py` (" + err.message + ")";
+      b.style.display = "block";
+    }
+  }
+
+  setupFilters();
+  setupExport();
+  load();
+  setInterval(load, REFRESH_MS);
+})();
+</script>
 </body>
 </html>
