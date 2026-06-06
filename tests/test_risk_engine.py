@@ -63,6 +63,75 @@ def test_spread_above_max_blocks_even_with_good_confidence():
     assert "spread_above_max" in decision["context_blocks"]
 
 
+def test_high_impact_event_hard_blocks_when_block_near_enabled():
+    engine = AdaptiveRiskEngine(_config(block_near_high_impact_events=True))
+    decision = engine.evaluate(
+        signal="BUY",
+        confidence=80,
+        combined_signal={"signal": "BUY", "combined_score": 0.80},
+        event_risk={"dangerous_event_nearby": True, "dangerous_event_reason": "NFP em 30min"},
+        gate_context={
+            "combined_score": 0.80,
+            "market": {"is_open": True},
+            "operational": {"can_open_trade": True},
+            "cooldown": {},
+        },
+    )
+
+    assert decision["allow_trade"] is False
+    assert "high_impact_event_nearby" in decision["context_blocks"]
+
+
+def test_nearby_event_does_not_block_when_both_flags_disabled():
+    engine = AdaptiveRiskEngine(
+        _config(block_near_high_impact_events=False, block_extreme_news_risk=False)
+    )
+    decision = engine.evaluate(
+        signal="BUY",
+        confidence=80,
+        combined_signal={"signal": "BUY", "combined_score": 0.80},
+        event_risk={"dangerous_event_nearby": True, "dangerous_event_reason": "NFP em 30min"},
+        gate_context={
+            "combined_score": 0.80,
+            "market": {"is_open": True},
+            "operational": {"can_open_trade": True},
+            "cooldown": {},
+        },
+    )
+
+    assert "high_impact_event_nearby" not in decision["context_blocks"]
+
+
+def test_evaluate_trade_blocks_nearby_high_impact_event_by_default(monkeypatch):
+    monkeypatch.setenv("ALLOW_SELL", "true")
+    monkeypatch.setenv("ATR_FILTER_ENABLED", "false")
+    monkeypatch.setenv("MOMENTUM_FILTER_ENABLED", "false")
+    monkeypatch.delenv("BLOCK_NEAR_HIGH_IMPACT_EVENTS", raising=False)
+    monkeypatch.delenv("BLOCK_EXTREME_NEWS_RISK", raising=False)
+    result = evaluate_trade(
+        "EUR/USD",
+        {
+            "signal": "SELL",
+            "confidence": 70,
+            "hold_off": False,
+            "combined_score": -0.70,
+            "reasoning": "score SELL forte",
+        },
+        1.1700,
+        event_risk={"dangerous_event_nearby": True, "dangerous_event_reason": "CPI em 20min"},
+        atr_pips=14.0,
+        gate_context={
+            "combined_score": -0.70,
+            "market": {"is_open": True},
+            "operational": {"can_open_trade": True},
+            "cooldown": {},
+        },
+    )
+
+    assert result["trade_allowed"] is False
+    assert "high_impact_event_nearby" in result["adaptive_risk"]["context_blocks"]
+
+
 def test_evaluate_trade_uses_adaptive_gate_instead_of_fixed_65(monkeypatch):
     monkeypatch.setenv("ALLOW_SELL", "true")
     monkeypatch.setenv("ATR_FILTER_ENABLED", "false")

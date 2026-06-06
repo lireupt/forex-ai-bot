@@ -302,6 +302,18 @@ def _ensure_decisions_columns(conn):
         "operational_mode": "TEXT",
         "operational_can_trade": "INTEGER",
         "operational_block_reason": "TEXT",
+        "ai_aggregated_signal": "TEXT",
+        "ai_aggregated_confidence": "INTEGER",
+        "ai_aggregated_score": "REAL",
+        "ai_aggregated_risk_level": "TEXT",
+        "ai_aggregated_should_trade": "INTEGER",
+        "ai_aggregated_should_reduce_risk": "INTEGER",
+        "ai_aggregated_reasoning": "TEXT",
+        "ai_aggregated_supporting_factors": "TEXT",
+        "ai_aggregated_contradicting_factors": "TEXT",
+        "ai_aggregated_warnings": "TEXT",
+        "ai_aggregated_status": "TEXT",
+        "ai_aggregated_model_version": "TEXT",
     }
     for name, column_type in columns.items():
         if name not in existing:
@@ -437,6 +449,16 @@ def _env_bool(name, default):
     if value is None or value.strip() == "":
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_int(name, default):
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return int(float(value))
+    except ValueError:
+        return default
 
 
 def _event_is_whitelisted(title):
@@ -750,6 +772,57 @@ def save_decision(conn, entry):
     )
     conn.commit()
     return cursor.lastrowid
+
+
+def update_decision_aggregator(conn, decision_id, result):
+    """Grava o parecer da IA agregadora (shadow) numa decisão já persistida.
+
+    Update dedicado para não tocar no INSERT posicional de `save_decision`.
+    Listas são serializadas em JSON. Não levanta se `decision_id` for None.
+    """
+    if not decision_id or not result:
+        return False
+
+    def _json(value):
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False)
+        return value
+
+    conn.execute(
+        """
+        UPDATE decisions
+        SET ai_aggregated_signal = ?,
+            ai_aggregated_confidence = ?,
+            ai_aggregated_score = ?,
+            ai_aggregated_risk_level = ?,
+            ai_aggregated_should_trade = ?,
+            ai_aggregated_should_reduce_risk = ?,
+            ai_aggregated_reasoning = ?,
+            ai_aggregated_supporting_factors = ?,
+            ai_aggregated_contradicting_factors = ?,
+            ai_aggregated_warnings = ?,
+            ai_aggregated_status = ?,
+            ai_aggregated_model_version = ?
+        WHERE id = ?
+        """,
+        (
+            result.get("ai_aggregated_signal"),
+            result.get("ai_aggregated_confidence"),
+            result.get("ai_aggregated_score"),
+            result.get("risk_level"),
+            int(bool(result.get("should_trade"))),
+            int(bool(result.get("should_reduce_risk"))),
+            result.get("reasoning_summary"),
+            _json(result.get("supporting_factors")),
+            _json(result.get("contradicting_factors")),
+            _json(result.get("warnings")),
+            result.get("status", "ok"),
+            result.get("model_version"),
+            decision_id,
+        ),
+    )
+    conn.commit()
+    return True
 
 
 def get_recent_paper_trades_for_direction(conn, pair, source, direction, since_iso):
@@ -1418,6 +1491,228 @@ def get_calibration_summary(conn, since_iso=None, pair=None):
         "expectancy": round(sum(pips) / closed, 1) if closed and pips else None,
         "best_direction": best_direction,
         "direction_net_pips": {"BUY": buy_net, "SELL": sell_net},
+    }
+
+
+def _aggregator_trade_metrics(trades):
+    """Métricas de um conjunto de paper trades (mesma convenção do resto do projeto).
+
+    winrate e expectancy contam apenas trades decisivos (win/loss); expired entra
+    em `trades`/`net_pips` mas não no denominador de winrate.
+    """
+    total = len(trades)
+    wins = sum(1 for t in trades if t.get("status") == "win")
+    losses = sum(1 for t in trades if t.get("status") == "loss")
+    expired = sum(1 for t in trades if t.get("status") == "expired")
+    closed = wins + losses
+    pips = [float(t["result_pips"]) for t in trades if t.get("result_pips") is not None]
+    gross_profit = sum(value for value in pips if value > 0)
+    gross_loss = abs(sum(value for value in pips if value < 0))
+    return {
+        "trades": total,
+        "wins": wins,
+        "losses": losses,
+        "expired": expired,
+        "winrate": round(wins / closed * 100, 1) if closed else None,
+        "avg_pips": round(sum(pips) / len(pips), 1) if pips else None,
+        "net_pips": round(sum(pips), 1) if pips else 0.0,
+        "profit_factor": round(gross_profit / gross_loss, 2)
+        if gross_loss
+        else (999.0 if gross_profit > 0 else None),
+        "expectancy": round(sum(pips) / closed, 2) if closed and pips else None,
+    }
+
+
+def _delta(after, before):
+    if after is None or before is None:
+        return None
+    return round(after - before, 2)
+
+
+def get_aggregator_analysis(conn, since_iso=None, pair=None):
+    """Análise estatística do voto da IA agregadora (shadow) — só medição.
+
+    Cruza os paper trades fechados com o veredicto da IA gravado na decisão
+    associada. NÃO altera nenhuma decisão, gate ou resultado. Resiliente a bases
+    de dados antigas sem as colunas `ai_aggregated_*`.
+    """
+    empty = {
+        "available": False,
+        "reason": "sem dados da IA agregadora",
+        "window": since_iso or "all",
+        "total_evaluated": 0,
+        "should_trade_true": _aggregator_trade_metrics([]),
+        "should_trade_false": _aggregator_trade_metrics([]),
+        "baseline": _aggregator_trade_metrics([]),
+        "impact_if_veto_enabled": {
+            "winrate_change": None,
+            "net_pips_change": None,
+            "expectancy_change": None,
+            "profit_factor_change": None,
+        },
+        "agreement": {
+            "agree": 0,
+            "disagree": 0,
+            "agreement_rate": None,
+            "winrate_when_agree": None,
+            "winrate_when_disagree": None,
+        },
+        "risk_level": {
+            level: {"trades": 0, "wins": 0, "losses": 0, "net_pips": 0.0}
+            for level in ("low", "medium", "high")
+        },
+        "warnings": {},
+        "recommendation": "Continuar em shadow mode",
+        "recommendation_reasons": ["sem dados suficientes da IA agregadora"],
+    }
+
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(decisions)").fetchall()}
+    if "ai_aggregated_should_trade" not in existing:
+        empty["reason"] = "colunas ai_aggregated_* ausentes (base de dados antiga)"
+        return empty
+
+    where = ["d.ai_aggregated_should_trade IS NOT NULL", "pt.status IN ('win','loss','expired')"]
+    params = []
+    if since_iso:
+        where.append("pt.created_at >= ?")
+        params.append(since_iso)
+    if pair:
+        where.append("pt.pair = ?")
+        params.append(pair)
+    clause = "WHERE " + " AND ".join(where)
+    rows = _rows_to_dicts(conn.execute(
+        f"""
+        SELECT pt.status AS status, pt.result_pips AS result_pips, pt.direction AS direction,
+               d.ai_aggregated_signal AS ai_aggregated_signal,
+               d.ai_aggregated_should_trade AS should_trade,
+               d.ai_aggregated_risk_level AS risk_level,
+               d.ai_aggregated_warnings AS warnings,
+               d.technical_signal AS technical_signal
+        FROM paper_trades pt
+        JOIN decisions d ON pt.decision_id = d.id
+        {clause}
+        ORDER BY pt.id ASC
+        """,
+        tuple(params),
+    ).fetchall())
+
+    if not rows:
+        empty["reason"] = "ainda não há paper trades fechados com veredicto da IA agregadora"
+        return empty
+
+    true_trades = [r for r in rows if r.get("should_trade") == 1]
+    false_trades = [r for r in rows if r.get("should_trade") == 0]
+
+    true_metrics = _aggregator_trade_metrics(true_trades)
+    false_metrics = _aggregator_trade_metrics(false_trades)
+    baseline = _aggregator_trade_metrics(rows)
+
+    impact = {
+        "winrate_change": _delta(true_metrics["winrate"], baseline["winrate"]),
+        "net_pips_change": _delta(true_metrics["net_pips"], baseline["net_pips"]),
+        "expectancy_change": _delta(true_metrics["expectancy"], baseline["expectancy"]),
+        "profit_factor_change": _delta(true_metrics["profit_factor"], baseline["profit_factor"]),
+    }
+
+    agree_trades = []
+    disagree_trades = []
+    for row in rows:
+        ai_sig = (row.get("ai_aggregated_signal") or "").upper()
+        tech_sig = (row.get("technical_signal") or "").upper()
+        if ai_sig and ai_sig == tech_sig:
+            agree_trades.append(row)
+        else:
+            disagree_trades.append(row)
+    agree_metrics = _aggregator_trade_metrics(agree_trades)
+    disagree_metrics = _aggregator_trade_metrics(disagree_trades)
+    agreement_total = len(agree_trades) + len(disagree_trades)
+    agreement = {
+        "agree": len(agree_trades),
+        "disagree": len(disagree_trades),
+        "agreement_rate": round(len(agree_trades) / agreement_total * 100, 1) if agreement_total else None,
+        "winrate_when_agree": agree_metrics["winrate"],
+        "winrate_when_disagree": disagree_metrics["winrate"],
+    }
+
+    risk_level = {}
+    for level in ("low", "medium", "high"):
+        bucket = [r for r in rows if (r.get("risk_level") or "").lower() == level]
+        metrics = _aggregator_trade_metrics(bucket)
+        risk_level[level] = {
+            "trades": metrics["trades"],
+            "wins": metrics["wins"],
+            "losses": metrics["losses"],
+            "net_pips": metrics["net_pips"],
+        }
+
+    warnings = {}
+    for row in rows:
+        raw = row.get("warnings")
+        parsed = []
+        if isinstance(raw, str) and raw.strip():
+            try:
+                loaded = json.loads(raw)
+                if isinstance(loaded, list):
+                    parsed = loaded
+            except json.JSONDecodeError:
+                parsed = []
+        elif isinstance(raw, list):
+            parsed = raw
+        for warning in parsed:
+            key = str(warning).strip()
+            if key:
+                warnings[key] = warnings.get(key, 0) + 1
+    warnings = dict(sorted(warnings.items(), key=lambda item: (-item[1], item[0])))
+
+    min_trades = _env_int("AGGREGATOR_ADVISORY_MIN_TRADES", 30)
+    min_per_group = _env_int("AGGREGATOR_ADVISORY_MIN_PER_GROUP", 10)
+    reasons = []
+    ready = True
+    if len(rows) < min_trades:
+        ready = False
+        reasons.append(f"amostra insuficiente ({len(rows)} < {min_trades} trades)")
+    if len(true_trades) < min_per_group or len(false_trades) < min_per_group:
+        ready = False
+        reasons.append(
+            f"grupos pequenos (should_trade=True={len(true_trades)}, "
+            f"should_trade=False={len(false_trades)}; mínimo {min_per_group})"
+        )
+    if true_metrics["winrate"] is None or false_metrics["winrate"] is None:
+        ready = False
+        reasons.append("winrate indisponível num dos grupos")
+    elif true_metrics["winrate"] <= false_metrics["winrate"]:
+        ready = False
+        reasons.append("winrate de should_trade=True não supera should_trade=False")
+    if (impact["net_pips_change"] or 0) <= 0:
+        ready = False
+        reasons.append("vetar should_trade=False não melhora net_pips")
+    if (impact["expectancy_change"] or 0) <= 0:
+        ready = False
+        reasons.append("vetar should_trade=False não melhora expectancy")
+
+    if ready:
+        recommendation = "IA pronta para modo advisory"
+        reasons = [
+            "amostra suficiente e separação consistente entre should_trade True/False",
+            f"vetar should_trade=False melhoraria net_pips em {impact['net_pips_change']:+}",
+        ]
+    else:
+        recommendation = "Continuar em shadow mode"
+
+    return {
+        "available": True,
+        "reason": "",
+        "window": since_iso or "all",
+        "total_evaluated": len(rows),
+        "should_trade_true": true_metrics,
+        "should_trade_false": false_metrics,
+        "baseline": baseline,
+        "impact_if_veto_enabled": impact,
+        "agreement": agreement,
+        "risk_level": risk_level,
+        "warnings": warnings,
+        "recommendation": recommendation,
+        "recommendation_reasons": reasons,
     }
 
 

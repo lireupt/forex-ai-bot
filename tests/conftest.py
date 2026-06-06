@@ -42,6 +42,8 @@ def _isolate_env(monkeypatch):
         "OPERATIONAL_TRADE_START_HOUR", "OPERATIONAL_TRADE_END_HOUR",
         "COOLDOWN_MINUTES", "MAX_DIRECTION_SIGNALS_PER_DAY",
         "MIN_CONFIDENCE_TO_TRADE",
+        "AI_AGGREGATOR_ENABLED", "AI_AGGREGATOR_PROVIDER", "AI_AGGREGATOR_MODE",
+        "AGGREGATOR_ADVISORY_MIN_TRADES", "AGGREGATOR_ADVISORY_MIN_PER_GROUP",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)

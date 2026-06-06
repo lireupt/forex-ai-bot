@@ -13,6 +13,8 @@ from modules.ai_analyst import (
     build_analysis_input,
     model_version_for_provider,
 )
+from modules import ai_aggregator
+from modules import context_snapshot
 from modules import database
 from modules.market import forex_market_state, is_forex_market_open
 from modules.news_scraper import fetch_all_events, fetch_all_news
@@ -1351,6 +1353,49 @@ def _signal_persistence(conn, pair, direction, limit=5):
     return count
 
 
+def _run_aggregator_shadow(
+    conn,
+    technical_result,
+    ai_result,
+    combined,
+    gating_combined,
+    trade_decision,
+    gate_context,
+    event_risk,
+    risk_performance,
+    gating_mode,
+):
+    """Camada 4 (IA agregadora) em modo SHADOW.
+
+    Calcula o parecer agregado mas NÃO influencia a decisão nem o gating. É
+    sempre não-fatal: qualquer falha devolve None e o ciclo segue normal.
+    Activado por AI_AGGREGATOR_ENABLED (default off).
+    """
+    if not _env_bool("AI_AGGREGATOR_ENABLED", False):
+        return None, None
+    try:
+        performance = context_snapshot.build_performance_snapshot(
+            conn, PAIR, recent_performance=risk_performance
+        )
+        snapshot = context_snapshot.build_market_snapshot(
+            PAIR,
+            technical_result,
+            ai_result,
+            combined,
+            gating_combined,
+            trade_decision,
+            gate_context,
+            event_risk,
+            performance,
+            gating_mode=gating_mode,
+        )
+        result = ai_aggregator.analyse(snapshot)
+        return result, snapshot
+    except Exception as e:
+        print(f"[aggregator] shadow falhou (não-fatal): {type(e).__name__}: {e}")
+        return None, None
+
+
 def _recent_risk_performance(conn, pair, limit=30):
     trades = database.get_paper_trades(conn, limit=limit, status=None, source="combined")
     closed = [
@@ -1553,7 +1598,7 @@ def main():
         "event": event_risk,
         "operational": op_state,
         "allow_buy": _env_bool("ALLOW_BUY", True),
-        "allow_sell": _env_bool("ALLOW_SELL", False),
+        "allow_sell": _env_bool("ALLOW_SELL", True),
         "ai_status": ai_result.get("status", "ok"),
         "ai_signal": ai_result.get("signal"),
         "ai_confidence": ai_result.get("confidence"),
@@ -1581,8 +1626,29 @@ def main():
         technical_indicators=technical_result.get("indicators", {}),
         gate_context=gate_context,
     )
+    aggregator_result, aggregator_snapshot = _run_aggregator_shadow(
+        conn,
+        technical_result,
+        ai_result,
+        combined,
+        gating_combined,
+        trade_decision,
+        gate_context,
+        event_risk,
+        risk_performance,
+        gating_mode_used,
+    )
+
     _print_final(ai_result, technical_result, combined, trade_decision)
     print()
+    if aggregator_result is not None:
+        print(
+            f"IA agregadora (shadow): {aggregator_result['ai_aggregated_signal']} "
+            f"({aggregator_result['ai_aggregated_confidence']}%) "
+            f"should_trade={aggregator_result['should_trade']} "
+            f"risk={aggregator_result['risk_level']} "
+            f"[{aggregator_result.get('status', 'ok')}]"
+        )
     print(
         f"Shadow combined: {shadow_combined['signal']} "
         f"({shadow_combined['confidence']}%) — {shadow_combined['reason']}"
@@ -1644,9 +1710,16 @@ def main():
         operational_state=op_state,
     )
     decision_entry["is_duplicate"] = is_duplicate
+    if aggregator_result is not None:
+        decision_entry["ai_aggregated"] = aggregator_result
 
     jsonl_saved, jsonl_error = _save_jsonl(decision_entry)
     sqlite_saved, sqlite_error, decision_id = _save_sqlite_decision(conn, decision_entry)
+    if aggregator_result is not None and decision_id is not None:
+        try:
+            database.update_decision_aggregator(conn, decision_id, aggregator_result)
+        except Exception as e:
+            print(f"[aggregator] gravação shadow falhou (não-fatal): {type(e).__name__}: {e}")
     paper_trade_id = _maybe_create_paper_trade(
         conn,
         decision_id=decision_id,

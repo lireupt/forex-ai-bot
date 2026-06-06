@@ -91,6 +91,20 @@ def _parse_json_obj(value):
     return {}
 
 
+def _parse_json_list(value):
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
 def _first_text(row, *keys):
     for key in keys:
         value = row.get(key)
@@ -183,6 +197,17 @@ def _normalise(row, paper_trade_lookup=None):
 
     gate_diagnostics = _parse_json_obj(row.get("gate_diagnostics_json") or row.get("gate_diagnostics"))
 
+    _agg = dict(row.get("ai_aggregated") or {})
+    for _k in (
+        "ai_aggregated_signal", "ai_aggregated_confidence", "ai_aggregated_score",
+        "ai_aggregated_risk_level", "ai_aggregated_should_trade",
+        "ai_aggregated_should_reduce_risk", "ai_aggregated_reasoning",
+        "ai_aggregated_supporting_factors", "ai_aggregated_contradicting_factors",
+        "ai_aggregated_warnings", "ai_aggregated_status", "ai_aggregated_model_version",
+    ):
+        if row.get(_k) is not None:
+            _agg[_k] = row.get(_k)
+
     return {
         "timestamp": row.get("timestamp") or "",
         "pair": row.get("pair") or "",
@@ -252,6 +277,18 @@ def _normalise(row, paper_trade_lookup=None):
         "operational_mode": row.get("operational_mode") or "",
         "operational_can_trade": _coerce_bool(row.get("operational_can_trade")),
         "operational_block_reason": row.get("operational_block_reason") or "",
+        "ai_aggregated_signal": _agg.get("ai_aggregated_signal") or None,
+        "ai_aggregated_confidence": _agg.get("ai_aggregated_confidence"),
+        "ai_aggregated_score": _coerce_float(_agg.get("ai_aggregated_score")),
+        "ai_aggregated_risk_level": _agg.get("ai_aggregated_risk_level") or _agg.get("risk_level") or "",
+        "ai_aggregated_should_trade": _coerce_bool(_agg.get("ai_aggregated_should_trade", _agg.get("should_trade"))),
+        "ai_aggregated_should_reduce_risk": _coerce_bool(_agg.get("ai_aggregated_should_reduce_risk", _agg.get("should_reduce_risk"))),
+        "ai_aggregated_reasoning": _agg.get("ai_aggregated_reasoning") or _agg.get("reasoning_summary") or "",
+        "ai_aggregated_supporting_factors": _parse_json_list(_agg.get("ai_aggregated_supporting_factors", _agg.get("supporting_factors"))),
+        "ai_aggregated_contradicting_factors": _parse_json_list(_agg.get("ai_aggregated_contradicting_factors", _agg.get("contradicting_factors"))),
+        "ai_aggregated_warnings": _parse_json_list(_agg.get("ai_aggregated_warnings", _agg.get("warnings"))),
+        "ai_aggregated_status": _agg.get("ai_aggregated_status") or _agg.get("status") or None,
+        "ai_aggregated_model_version": _agg.get("ai_aggregated_model_version") or _agg.get("model_version") or None,
     }
 
 
@@ -410,6 +447,14 @@ def _read_from_sqlite(limit):
                 "operational_can_trade": "operational_can_trade" if "operational_can_trade" in cols else "NULL AS operational_can_trade",
                 "operational_block_reason": "operational_block_reason" if "operational_block_reason" in cols else "NULL AS operational_block_reason",
             }
+            for _agg_col in (
+                "ai_aggregated_signal", "ai_aggregated_confidence", "ai_aggregated_score",
+                "ai_aggregated_risk_level", "ai_aggregated_should_trade",
+                "ai_aggregated_should_reduce_risk", "ai_aggregated_reasoning",
+                "ai_aggregated_supporting_factors", "ai_aggregated_contradicting_factors",
+                "ai_aggregated_warnings", "ai_aggregated_status", "ai_aggregated_model_version",
+            ):
+                cols_expr[_agg_col] = _agg_col if _agg_col in cols else f"NULL AS {_agg_col}"
             rows = conn.execute(
                 f"""
                 SELECT timestamp, pair, timeframe, ai_signal, technical_signal,
@@ -444,7 +489,19 @@ def _read_from_sqlite(limit):
                        rsi_vote, ema_vote, macd_vote,
                        paper_trade_id, {cols_expr['operational_mode']},
                        {cols_expr['operational_can_trade']},
-                       {cols_expr['operational_block_reason']}
+                       {cols_expr['operational_block_reason']},
+                       {cols_expr['ai_aggregated_signal']},
+                       {cols_expr['ai_aggregated_confidence']},
+                       {cols_expr['ai_aggregated_score']},
+                       {cols_expr['ai_aggregated_risk_level']},
+                       {cols_expr['ai_aggregated_should_trade']},
+                       {cols_expr['ai_aggregated_should_reduce_risk']},
+                       {cols_expr['ai_aggregated_reasoning']},
+                       {cols_expr['ai_aggregated_supporting_factors']},
+                       {cols_expr['ai_aggregated_contradicting_factors']},
+                       {cols_expr['ai_aggregated_warnings']},
+                       {cols_expr['ai_aggregated_status']},
+                       {cols_expr['ai_aggregated_model_version']}
                 FROM decisions
                 ORDER BY id DESC
                 LIMIT ?
@@ -589,6 +646,20 @@ def _read_calibration_summary():
         return {}
 
 
+def _read_aggregator_analysis():
+    if not DB_PATH.exists():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            return database.get_aggregator_analysis(conn)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+
+
 def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -606,6 +677,7 @@ def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
     gates_snapshot = _read_gates_snapshot()
     gates_history = _read_gate_history_from_sqlite(limit=20)
     calibration = _read_calibration_summary() if source == "sqlite" else {}
+    aggregator_analysis = _read_aggregator_analysis() if source == "sqlite" else {}
 
     payload = {
         "summary": summary,
@@ -613,6 +685,7 @@ def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
         "paper_trades": paper_trades,
         "paper_trade_summary": paper_trade_summary,
         "calibration": calibration,
+        "ai_aggregator_analysis": aggregator_analysis,
         "gates_check": gates_snapshot,
         "gates_history": gates_history,
     }

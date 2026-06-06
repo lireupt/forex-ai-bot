@@ -304,7 +304,11 @@ class AdaptiveRiskEngine:
         if cooldown.get("max_direction_signals_reached"):
             blocks.append("max_direction_signals_reached")
 
-        if self.config.get("block_extreme_news_risk") and event_risk.get("dangerous_event_nearby"):
+        event_block_enabled = (
+            self.config.get("block_near_high_impact_events")
+            or self.config.get("block_extreme_news_risk")
+        )
+        if event_block_enabled and event_risk.get("dangerous_event_nearby"):
             blocks.append("high_impact_event_nearby")
 
         out = []
