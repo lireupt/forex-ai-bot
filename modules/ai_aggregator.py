@@ -168,9 +168,23 @@ def _build_user_message(snapshot):
         _format_block("ESTADO DOS FILTROS/LIMITAÇÕES", filters_lines),
         "",
         _format_block("RECOMENDAÇÃO TÉCNICA PRELIMINAR", preliminary_lines),
-        "",
-        "Analisa o conjunto e devolve o JSON com o teu voto agregador.",
     ]
+
+    weekly_prep = snapshot.get("weekly_market_prep") or {}
+    if weekly_prep:
+        weekly_lines = [
+            f"- Bias macro semanal: {weekly_prep.get('macro_bias')}",
+            f"- Direcção preferida: {weekly_prep.get('preferred_direction')} (conf {weekly_prep.get('confidence')}%)",
+            f"- Nível de risco: {weekly_prep.get('risk_level')}",
+            f"- Recomendação: {weekly_prep.get('recommendation')}",
+            f"- Resumo: {weekly_prep.get('summary') or 'n/a'}",
+            f"- Raciocínio: {weekly_prep.get('reasoning_summary') or 'n/a'}",
+            f"- Avisos: {', '.join(weekly_prep.get('warnings') or []) or 'n/a'}",
+            f"- Semana: {weekly_prep.get('week_start')} (gerado {weekly_prep.get('created_at', 'n/a')})",
+        ]
+        sections += ["", _format_block("CONTEXTO SEMANAL (Weekly Market Prep)", weekly_lines)]
+
+    sections += ["", "Analisa o conjunto e devolve o JSON com o teu voto agregador."]
     return "\n".join(sections)
 
 

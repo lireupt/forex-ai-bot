@@ -196,6 +196,28 @@ def init_db(conn):
             result_pips REAL,
             result_r_multiple REAL
         );
+
+        CREATE TABLE IF NOT EXISTS weekly_market_prep (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            pair TEXT NOT NULL,
+            week_start TEXT,
+            macro_bias TEXT,
+            preferred_direction TEXT,
+            confidence INTEGER,
+            risk_level TEXT,
+            recommendation TEXT,
+            summary TEXT,
+            reasoning_summary TEXT,
+            key_weekend_news_json TEXT,
+            key_events_next_week_json TEXT,
+            market_opening_risks_json TEXT,
+            warnings_json TEXT,
+            raw_response_json TEXT,
+            provider TEXT,
+            model_version TEXT,
+            status TEXT
+        );
         """
     )
     _ensure_ai_analysis_columns(conn)
@@ -1837,3 +1859,85 @@ def save_analytics_metrics(conn, pair=None, metrics=None):
     )
     conn.commit()
     return metrics
+
+
+def save_weekly_market_prep(conn, result):
+    """Grava o resultado da preparação semanal na tabela weekly_market_prep."""
+    def _jdump(value):
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False)
+        return value or "[]"
+
+    raw = dict(result)
+    cursor = conn.execute(
+        """
+        INSERT INTO weekly_market_prep
+        (created_at, pair, week_start, macro_bias, preferred_direction,
+         confidence, risk_level, recommendation, summary, reasoning_summary,
+         key_weekend_news_json, key_events_next_week_json,
+         market_opening_risks_json, warnings_json, raw_response_json,
+         provider, model_version, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            utc_now(),
+            result.get("pair", ""),
+            result.get("week_start"),
+            result.get("macro_bias"),
+            result.get("preferred_direction"),
+            result.get("confidence"),
+            result.get("risk_level"),
+            result.get("recommendation"),
+            result.get("summary"),
+            result.get("reasoning_summary"),
+            _jdump(result.get("key_weekend_news")),
+            _jdump(result.get("key_events_next_week")),
+            _jdump(result.get("market_opening_risks")),
+            _jdump(result.get("warnings")),
+            json.dumps(raw, ensure_ascii=False),
+            result.get("provider"),
+            result.get("model_version"),
+            result.get("status", "ok"),
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_latest_weekly_market_prep(conn, pair="EUR/USD"):
+    """Devolve o registo mais recente de weekly_market_prep para o par, ou None."""
+    try:
+        row = conn.execute(
+            """
+            SELECT id, created_at, pair, week_start, macro_bias, preferred_direction,
+                   confidence, risk_level, recommendation, summary, reasoning_summary,
+                   key_weekend_news_json, key_events_next_week_json,
+                   market_opening_risks_json, warnings_json, provider, model_version, status
+            FROM weekly_market_prep
+            WHERE pair = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (pair,),
+        ).fetchone()
+    except Exception:
+        return None
+
+    if row is None:
+        return None
+
+    record = dict(row)
+
+    def _jload(value, default):
+        if not value:
+            return default
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return default
+
+    record["key_weekend_news"] = _jload(record.pop("key_weekend_news_json", None), [])
+    record["key_events_next_week"] = _jload(record.pop("key_events_next_week_json", None), [])
+    record["market_opening_risks"] = _jload(record.pop("market_opening_risks_json", None), [])
+    record["warnings"] = _jload(record.pop("warnings_json", None), [])
+    return record

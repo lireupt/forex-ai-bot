@@ -660,6 +660,20 @@ def _read_aggregator_analysis():
         return {}
 
 
+def _read_latest_weekly_market_prep(pair="EUR/USD"):
+    if not DB_PATH.exists():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            return database.get_latest_weekly_market_prep(conn, pair)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+
+
 def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -678,6 +692,7 @@ def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
     gates_history = _read_gate_history_from_sqlite(limit=20)
     calibration = _read_calibration_summary() if source == "sqlite" else {}
     aggregator_analysis = _read_aggregator_analysis() if source == "sqlite" else {}
+    latest_weekly_market_prep = _read_latest_weekly_market_prep() if source == "sqlite" else None
 
     payload = {
         "summary": summary,
@@ -688,6 +703,9 @@ def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
         "ai_aggregator_analysis": aggregator_analysis,
         "gates_check": gates_snapshot,
         "gates_history": gates_history,
+        "weekly_market_prep": {
+            "latest": latest_weekly_market_prep,
+        },
     }
 
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")

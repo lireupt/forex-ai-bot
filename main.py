@@ -17,6 +17,13 @@ from modules import ai_aggregator
 from modules import context_snapshot
 from modules import database
 from modules.market import forex_market_state, is_forex_market_open
+from modules.weekly_market_prep import (
+    weekend_mode_config,
+    weekly_prep_config,
+    is_weekend_mode_active,
+    is_weekly_prep_due,
+    run_weekly_prep,
+)
 from modules.news_scraper import fetch_all_events, fetch_all_news
 from modules.operational import operational_state
 from modules.price_feed import PROVIDER as PRICE_PROVIDER, fetch_candles
@@ -1377,6 +1384,11 @@ def _run_aggregator_shadow(
         performance = context_snapshot.build_performance_snapshot(
             conn, PAIR, recent_performance=risk_performance
         )
+        latest_prep = None
+        try:
+            latest_prep = database.get_latest_weekly_market_prep(conn, PAIR)
+        except Exception:
+            pass
         snapshot = context_snapshot.build_market_snapshot(
             PAIR,
             technical_result,
@@ -1388,6 +1400,7 @@ def _run_aggregator_shadow(
             event_risk,
             performance,
             gating_mode=gating_mode,
+            latest_weekly_market_prep=latest_prep,
         )
         result = ai_aggregator.analyse(snapshot)
         return result, snapshot
@@ -1486,6 +1499,63 @@ def _print_historical_summary(summary):
     print("└────────────────────────────────────────────")
 
 
+def _run_weekend_mode(conn, cache_config, provider):
+    """Executa o ciclo de fim-de-semana.
+
+    Actualiza notícias e calendário, corre a preparação semanal se for o momento,
+    exporta o dashboard. NÃO executa análise técnica, IA fundamental, nem paper trades.
+    """
+    wm_config = weekend_mode_config()
+    wp_config = weekly_prep_config()
+
+    print("=== Forex AI Bot — Weekend Mode ===")
+    print(f"Provider: {provider}\n")
+
+    relevant_news = []
+    events = []
+
+    if wm_config["update_news"]:
+        print("[weekend] A actualizar notícias...")
+        try:
+            relevant_news, _, news_origin = _get_news(conn, cache_config)
+            print(f"          {len(relevant_news)} artigos relevantes ({news_origin})")
+        except Exception as e:
+            print(f"          Falhou (não-fatal): {type(e).__name__}: {e}")
+
+    if wm_config["update_calendar"]:
+        print("[weekend] A actualizar calendário...")
+        try:
+            events, _, events_origin = _get_events(conn, cache_config)
+            print(f"          {len(events)} eventos ({events_origin})")
+        except Exception as e:
+            print(f"          Falhou (não-fatal): {type(e).__name__}: {e}")
+
+    if wp_config["enabled"] and is_weekly_prep_due(conn=conn, pair=PAIR):
+        print("[weekend] A executar preparação semanal da semana...")
+        try:
+            prep = run_weekly_prep(conn, relevant_news, events, pair=PAIR, provider=provider)
+            print(
+                f"          bias={prep.get('macro_bias')} | "
+                f"dir={prep.get('preferred_direction')} | "
+                f"conf={prep.get('confidence')}% | "
+                f"rec={prep.get('recommendation')} | "
+                f"status={prep.get('status')}"
+            )
+        except Exception as e:
+            print(f"          Falhou (não-fatal): {type(e).__name__}: {e}")
+    else:
+        print("[weekend] Preparação semanal: fora do horário ou já correu hoje.")
+
+    if wm_config["export_logs"]:
+        try:
+            export_web_data()
+            print("[weekend] Dashboard exportado.")
+        except Exception as e:
+            print(f"[weekend] Export falhou (não-fatal): {type(e).__name__}: {e}")
+
+    print("\n[weekend] Ciclo fim-de-semana concluído. Nenhum trade foi aberto.")
+
+
 def main():
     internet_ok, internet_status = _has_internet_connection()
     if not internet_ok:
@@ -1496,6 +1566,13 @@ def main():
     database.init_db(conn)
     cache_config = _load_cache_config()
     provider = (os.getenv("AI_PROVIDER") or "groq").strip().lower()
+
+    wm_config = weekend_mode_config()
+    if wm_config["enabled"] and is_weekend_mode_active():
+        _run_weekend_mode(conn, cache_config, provider)
+        conn.close()
+        return
+
     print(f"=== Forex AI Bot — análise para {PAIR} ===")
     print(f"Provider activo: {provider}\n")
     print(f"Cache activo: {cache_config['use_cache']} | Force refresh: {cache_config['force_refresh']}\n")

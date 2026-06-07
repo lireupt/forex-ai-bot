@@ -55,6 +55,7 @@ def build_market_snapshot(
     event_risk,
     performance,
     gating_mode=None,
+    latest_weekly_market_prep=None,
 ):
     """Monta o snapshot estruturado completo (input da IA agregadora)."""
     technical_result = technical_result or {}
@@ -133,7 +134,7 @@ def build_market_snapshot(
         "hold_off": bool(gating_combined.get("hold_off")),
     }
 
-    return {
+    snapshot = {
         "pair": pair,
         "technical": technical,
         "fundamental": fundamental,
@@ -142,3 +143,19 @@ def build_market_snapshot(
         "filters": filters,
         "preliminary_recommendation": preliminary_recommendation,
     }
+
+    if latest_weekly_market_prep:
+        snapshot["weekly_market_prep"] = {
+            "macro_bias": latest_weekly_market_prep.get("macro_bias"),
+            "preferred_direction": latest_weekly_market_prep.get("preferred_direction"),
+            "confidence": latest_weekly_market_prep.get("confidence"),
+            "risk_level": latest_weekly_market_prep.get("risk_level"),
+            "recommendation": latest_weekly_market_prep.get("recommendation"),
+            "summary": latest_weekly_market_prep.get("summary"),
+            "reasoning_summary": latest_weekly_market_prep.get("reasoning_summary"),
+            "warnings": latest_weekly_market_prep.get("warnings") or [],
+            "week_start": latest_weekly_market_prep.get("week_start"),
+            "created_at": latest_weekly_market_prep.get("created_at"),
+        }
+
+    return snapshot
