@@ -325,6 +325,23 @@
       .status-grid { grid-template-columns: repeat(2,1fr); }
       .app-meta span:nth-child(n+3) { display: none; }
     }
+
+    /* ── NOTÍCIAS IA ── */
+    .news-expand-row td {
+      background: var(--panel-2); padding: 16px 20px !important;
+      white-space: normal !important; border-bottom: 1px solid var(--border);
+    }
+    .news-expand-content { max-width: 900px; }
+    .news-expand-content .ne-section { margin-bottom: 10px; }
+    .news-expand-content .ne-label {
+      color: var(--muted); font-size: 10px; text-transform: uppercase;
+      letter-spacing: .6px; font-weight: 600; margin-bottom: 4px;
+    }
+    .news-row { cursor: pointer; }
+    .news-row:hover { background: rgba(29,34,44,.8) !important; }
+    input[type="date"].search-box { color-scheme: dark; }
+    select.search-box { cursor: pointer; }
+    .toolbar-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
   </style>
 </head>
 <body>
@@ -359,6 +376,13 @@
         <path d="M1 10L5 6L8 9L13 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
       </svg>
       Trades
+    </button>
+    <button class="tab-btn" data-tab="news">
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+        <rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M4 5h6M4 7.5h6M4 10h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+      </svg>
+      Notícias IA
     </button>
     <button class="tab-btn" data-tab="export">
       <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
@@ -436,6 +460,33 @@
     </div>
   </section>
 
+  <!-- PAGE: NOTÍCIAS IA -->
+  <section class="page" id="page-news">
+    <div class="kpi-grid" id="news-kpi" style="margin-bottom:12px;"></div>
+    <div class="chart-grid" id="news-charts" style="grid-template-columns:repeat(2,1fr);margin-bottom:14px;"></div>
+    <div class="table-panel">
+      <div class="table-toolbar" id="news-toolbar" style="gap:5px;">
+        <button class="fp active" data-nf="all">Todos</button>
+        <button class="fp" data-nf="BUY">BUY</button>
+        <button class="fp sell" data-nf="SELL">SELL</button>
+        <button class="fp neutral" data-nf="NEUTRAL">NEUTRAL</button>
+        <button class="fp warn" data-nf="holdoff">Hold off</button>
+        <div class="toolbar-sep"></div>
+        <input type="date" id="news-date-from" class="search-box" style="width:134px;margin-left:0;" title="De (UTC)">
+        <input type="date" id="news-date-to" class="search-box" style="width:134px;margin-left:0;" title="Até (UTC)">
+        <div class="toolbar-sep"></div>
+        <input type="text" class="search-box" id="news-search" placeholder="Pesquisar raciocínio…">
+        <select id="news-pg-size" class="search-box" style="width:86px;margin-left:0;" title="Linhas por página">
+          <option value="10">10/pág</option>
+          <option value="25" selected>25/pág</option>
+          <option value="50">50/pág</option>
+        </select>
+      </div>
+      <div id="news-table-host"><div class="empty-state">a carregar…</div></div>
+      <div class="pagination" id="news-pages" style="display:none;"></div>
+    </div>
+  </section>
+
   <!-- PAGE: EXPORT -->
   <section class="page" id="page-export">
     <p style="color:var(--muted);font-size:12px;margin-bottom:20px;">
@@ -472,6 +523,12 @@
         <div class="export-desc">data.json completo tal como no servidor</div>
         <button class="export-btn">Descarregar</button>
       </div>
+      <div class="export-card" id="exp-news-ia">
+        <div class="export-icon">📰</div>
+        <div class="export-label">Notícias IA CSV</div>
+        <div class="export-desc">Avaliações IA — sinal, sentimento e contexto macro</div>
+        <button class="export-btn">Descarregar</button>
+      </div>
     </div>
   </section>
 
@@ -506,6 +563,7 @@
   const decSt = { page: 1, filter: "all", search: "" };
   const paperSt = { page: 1, filter: "all" };
   const aggSt = { page: 1 };
+  const newsSt = { page: 1, filter: "all", search: "", dateFrom: "", dateTo: "", pageSize: 25, expandedTs: null };
 
   const $ = id => document.getElementById(id);
   const $$ = (sel, ctx) => (ctx || document).querySelectorAll(sel);
@@ -993,6 +1051,232 @@
     renderPg("agg-pages", aggSt, totalPg, renderAggTable);
   }
 
+  /* ── NOTÍCIAS IA ── */
+  function _newsRows() {
+    return _decisions.filter(d => d.ai_signal || d.ai_bias).slice().reverse();
+  }
+
+  function filterNews(list) {
+    let r = list;
+    const f = newsSt.filter;
+    if (f === "BUY")     r = r.filter(d => (d.ai_bias || d.ai_signal) === "BUY");
+    else if (f === "SELL")    r = r.filter(d => (d.ai_bias || d.ai_signal) === "SELL");
+    else if (f === "NEUTRAL") r = r.filter(d => (d.ai_bias || d.ai_signal) === "NEUTRAL");
+    else if (f === "holdoff") r = r.filter(d => d.hold_off);
+    if (newsSt.dateFrom) {
+      const from = new Date(newsSt.dateFrom + "T00:00:00");
+      r = r.filter(d => d.timestamp && new Date(d.timestamp) >= from);
+    }
+    if (newsSt.dateTo) {
+      const to = new Date(newsSt.dateTo + "T23:59:59");
+      r = r.filter(d => d.timestamp && new Date(d.timestamp) <= to);
+    }
+    if (newsSt.search) {
+      const q = newsSt.search.toLowerCase();
+      r = r.filter(d =>
+        (d.ai_analysis_text || "").toLowerCase().includes(q) ||
+        (d.ai_reason || "").toLowerCase().includes(q) ||
+        (d.macro_context || "").toLowerCase().includes(q) ||
+        (d.news_sentiment || "").toLowerCase().includes(q) ||
+        (d.volatility_context || "").toLowerCase().includes(q) ||
+        (d.ai_bias || d.ai_signal || "").toLowerCase().includes(q)
+      );
+    }
+    return r;
+  }
+
+  function renderNewsKpi() {
+    const rows = _newsRows();
+    if (!rows.length) {
+      $("news-kpi").innerHTML = "";
+      return;
+    }
+    const last = rows[0];
+    const sentMap = {};
+    rows.forEach(d => { const s = (d.news_sentiment || "—"); sentMap[s] = (sentMap[s] || 0) + 1; });
+    const domSent = Object.entries(sentMap).sort((a, b) => b[1] - a[1])[0]?.[0] || "—";
+    const avgConf = Math.round(rows.reduce((s, d) => s + (Number(d.ai_confidence) || 0), 0) / rows.length);
+    const holdoffs = rows.filter(d => d.hold_off).length;
+
+    $("news-kpi").innerHTML = [
+      { label: "Total Avaliações IA",  value: rows.length, color: "blue" },
+      { label: "Última Avaliação",     value: fmtTime(last.timestamp), small: true },
+      { label: "Sinal IA Recente",     value: pill(last.ai_bias || last.ai_signal || "—"), raw: true },
+      { label: "Confiança IA Média",   value: avgConf + "%", color: avgConf >= 50 ? "green" : "orange" },
+      { label: "Sentimento Dominante", value: esc(domSent) },
+      { label: "Hold off Total",       value: holdoffs, color: holdoffs > 0 ? "orange" : "" },
+    ].map(c => `<div class="kpi-card ${c.color||""}">
+      <div class="kpi-label">${c.label}</div>
+      <div class="kpi-value ${c.color||""}" style="${c.small ? "font-size:14px;line-height:1.3;" : ""}">${c.raw ? c.value : esc(String(c.value))}</div>
+    </div>`).join("");
+  }
+
+  function renderNewsCharts() {
+    const rows = _newsRows();
+    const sentMap = {};
+    const sigMap = { BUY: 0, SELL: 0, NEUTRAL: 0 };
+    rows.forEach(d => {
+      const s = (d.news_sentiment || "neutral").toLowerCase();
+      sentMap[s] = (sentMap[s] || 0) + 1;
+      const sig = d.ai_bias || d.ai_signal || "NEUTRAL";
+      if (sig in sigMap) sigMap[sig]++; else sigMap.NEUTRAL++;
+    });
+    $("news-charts").innerHTML = `
+      <div class="chart-card">
+        <div class="chart-title">Sentimento das Notícias</div>
+        <div class="chart-wrap">${rows.length ? donutChart([
+          { label: "Bullish",  value: (sentMap.bullish  || sentMap.positive || 0), color: "#2ec27e" },
+          { label: "Bearish",  value: (sentMap.bearish  || sentMap.negative || 0), color: "#ed4245" },
+          { label: "Neutral",  value: (sentMap.neutral  || 0),                     color: "#8a93a3" },
+          { label: "Mixed",    value: (sentMap.mixed    || 0),                     color: "#f5a623" },
+        ]) : emptyChart("Sem dados")}</div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Sinais IA Fundamental</div>
+        <div class="chart-wrap">${rows.length ? donutChart([
+          { label: "BUY",     value: sigMap.BUY,     color: "#2ec27e" },
+          { label: "SELL",    value: sigMap.SELL,    color: "#ed4245" },
+          { label: "NEUTRAL", value: sigMap.NEUTRAL, color: "#8a93a3" },
+        ]) : emptyChart("Sem dados")}</div>
+      </div>
+    `;
+  }
+
+  function _newsExpandHtml(d) {
+    const fullText = d.ai_analysis_text || d.ai_reason || "";
+    const snap = (typeof d.ai_features_snapshot === "object" && d.ai_features_snapshot) ? d.ai_features_snapshot : null;
+    const candles = snap?.recent_candles;
+
+    let html = `<div class="news-expand-content">`;
+
+    if (fullText) {
+      html += `<div class="ne-section">
+        <div class="ne-label">Raciocínio completo</div>
+        <pre class="ai-analysis-text" style="font-size:12px;color:var(--text);">${esc(fullText)}</pre>
+      </div>`;
+    }
+
+    const kv2 = [];
+    if (d.macro_context) kv2.push(["Contexto macro", esc(d.macro_context)]);
+    if (d.volatility_context) kv2.push(["Contexto volatilidade", esc(d.volatility_context)]);
+    if (d.news_sentiment) kv2.push(["Sentimento notícias", esc(d.news_sentiment)]);
+    if (d.ai_confidence != null) kv2.push(["Confiança IA", d.ai_confidence + "%"]);
+    if (d.ai_model_version) kv2.push(["Modelo IA", esc(d.ai_model_version)]);
+    if (kv2.length) {
+      html += `<div class="ne-section"><div class="kv">${kv2.map(([k,v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join("")}</div></div>`;
+    }
+
+    if (snap) {
+      const snapFields = [];
+      if (snap.close != null) snapFields.push(["Preço (close)", fmtN(snap.close, 5)]);
+      if (snap.rsi != null)   snapFields.push(["RSI", fmtN(snap.rsi, 2)]);
+      if (snap.atr_pips != null) snapFields.push(["ATR pips", fmtN(snap.atr_pips, 1)]);
+      if (snap.adx != null)   snapFields.push(["ADX", fmtN(snap.adx, 1)]);
+      if (snapFields.length) {
+        html += `<div class="ne-section"><div class="ne-label">Snapshot técnico</div>
+          <div class="features-grid">${snapFields.map(([k,v]) => `<span><span style="color:var(--muted);">${esc(k)}: </span>${v}</span>`).join("")}</div>
+        </div>`;
+      }
+    }
+
+    if (candles && candles.length) {
+      html += `<div class="ne-section">
+        <div class="ne-label">Candles recentes usados</div>
+        <pre class="candles">${esc(JSON.stringify(candles, null, 2))}</pre>
+      </div>`;
+    }
+
+    html += `</div>`;
+    return html;
+  }
+
+  function renderNewsTable() {
+    const all = _newsRows();
+    const filtered = filterNews(all);
+    const ps = newsSt.pageSize;
+    const totalPg = Math.max(1, Math.ceil(filtered.length / ps));
+    if (newsSt.page > totalPg) newsSt.page = totalPg;
+    const pg = filtered.slice((newsSt.page - 1) * ps, newsSt.page * ps);
+
+    if (!all.length) {
+      $("news-table-host").innerHTML = '<div class="empty-state">Ainda não existem avaliações IA de notícias disponíveis.</div>';
+      $("news-pages").style.display = "none";
+      return;
+    }
+    if (!filtered.length) {
+      $("news-table-host").innerHTML = '<div class="empty-state">Sem resultados para os filtros seleccionados.</div>';
+      $("news-pages").style.display = "none";
+      return;
+    }
+
+    const rows = pg.map(d => {
+      const ts = d.timestamp || "";
+      const aiSig = d.ai_bias || d.ai_signal || "NEUTRAL";
+      const conf  = d.ai_confidence != null ? d.ai_confidence + "%" : "—";
+      const sent  = esc(d.news_sentiment || "—");
+      const macro = d.macro_context || "";
+      const macroShort = esc(macro.length > 38 ? macro.substring(0, 38) + "…" : macro) || '<span style="color:var(--muted)">—</span>';
+      const volCtx = esc(d.volatility_context || "—");
+      const holdoff = d.hold_off ? '<span class="pill blocked">sim</span>' : '<span style="color:var(--muted);font-size:11px;">não</span>';
+      const reason = d.ai_reason || d.ai_analysis_text || "";
+      const reasonShort = esc(reason.length > 70 ? reason.substring(0, 70) + "…" : reason);
+      const isExp = newsSt.expandedTs === ts;
+
+      const expandRow = isExp ? `<tr class="news-expand-row"><td colspan="10">${_newsExpandHtml(d)}</td></tr>` : "";
+
+      return `<tr class="news-row" data-nts="${esc(ts)}">
+        <td style="color:var(--muted);font-size:11px;white-space:nowrap;">${fmtTime(ts)}</td>
+        <td><b>${esc(d.pair || "—")}</b></td>
+        <td>${pill(aiSig)}</td>
+        <td style="white-space:nowrap;">${conf}</td>
+        <td><span style="font-size:11px;color:var(--muted);">${sent}</span></td>
+        <td title="${esc(macro)}"><span style="font-size:11px;color:var(--muted);">${macroShort}</span></td>
+        <td><span style="font-size:11px;color:var(--muted);">${volCtx}</span></td>
+        <td>${holdoff}</td>
+        <td class="wrap" style="max-width:260px;">${reasonShort}</td>
+        <td><button class="fp" style="padding:2px 8px;font-size:10px;" data-nexp="${esc(ts)}">${isExp ? "▼" : "▶"}</button></td>
+      </tr>${expandRow}`;
+    }).join("");
+
+    $("news-table-host").innerHTML = `<table class="dt"><thead><tr>
+      <th>Data UTC</th><th>Par</th><th>Sinal IA</th><th>Conf.</th>
+      <th>Sentimento</th><th>Contexto Macro</th><th>Volatilidade</th>
+      <th>Hold off</th><th>Resumo / Raciocínio</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+
+    $$("[data-nexp]", $("news-table-host")).forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        const ts = btn.dataset.nexp;
+        newsSt.expandedTs = newsSt.expandedTs === ts ? null : ts;
+        renderNewsTable();
+      });
+    });
+    $$(".news-row", $("news-table-host")).forEach(row => {
+      row.addEventListener("click", () => {
+        const ts = row.dataset.nts;
+        if (!ts) return;
+        newsSt.expandedTs = newsSt.expandedTs === ts ? null : ts;
+        renderNewsTable();
+      });
+    });
+
+    renderNewsPg(filtered.length, ps, totalPg);
+  }
+
+  function renderNewsPg(total, ps, totalPg) {
+    const el = $("news-pages");
+    if (totalPg <= 1) { el.style.display = "none"; return; }
+    el.style.display = "flex";
+    el.innerHTML = `
+      <button class="pg-btn" id="news-pages-p" ${newsSt.page <= 1 ? "disabled" : ""}>← Anterior</button>
+      <span class="pg-info">Página ${newsSt.page} de ${totalPg} (${total} registos)</span>
+      <button class="pg-btn" id="news-pages-n" ${newsSt.page >= totalPg ? "disabled" : ""}>Seguinte →</button>
+    `;
+    $("news-pages-p")?.addEventListener("click", () => { newsSt.page--; renderNewsTable(); });
+    $("news-pages-n")?.addEventListener("click", () => { newsSt.page++; renderNewsTable(); });
+  }
+
   /* ── PAGINATION ── */
   function renderPg(id, st, total, fn) {
     const el = $(id);
@@ -1027,6 +1311,32 @@
         paperSt.filter = btn.dataset.f; paperSt.page = 1;
         renderPaperTable();
       });
+    });
+
+    // Notícias IA filters
+    $$("[data-nf]", $("news-toolbar")).forEach(btn => {
+      btn.addEventListener("click", () => {
+        $$("[data-nf]", $("news-toolbar")).forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        newsSt.filter = btn.dataset.nf; newsSt.page = 1; newsSt.expandedTs = null;
+        renderNewsTable();
+      });
+    });
+    $("news-search")?.addEventListener("input", e => {
+      newsSt.search = e.target.value; newsSt.page = 1; newsSt.expandedTs = null;
+      renderNewsTable();
+    });
+    $("news-date-from")?.addEventListener("change", e => {
+      newsSt.dateFrom = e.target.value; newsSt.page = 1; newsSt.expandedTs = null;
+      renderNewsTable();
+    });
+    $("news-date-to")?.addEventListener("change", e => {
+      newsSt.dateTo = e.target.value; newsSt.page = 1; newsSt.expandedTs = null;
+      renderNewsTable();
+    });
+    $("news-pg-size")?.addEventListener("change", e => {
+      newsSt.pageSize = Number(e.target.value); newsSt.page = 1; newsSt.expandedTs = null;
+      renderNewsTable();
     });
   }
 
@@ -1097,6 +1407,20 @@
       dlCSV("all_data.csv", rows);
     });
     $("exp-json").querySelector("button").addEventListener("click", () => dlJSON("data.json", _data));
+    $("exp-news-ia").querySelector("button").addEventListener("click", () => {
+      const rows = (_decisions.filter(d => d.ai_signal || d.ai_bias)).map(d => ({
+        timestamp:         d.timestamp,
+        pair:              d.pair,
+        ai_signal:         d.ai_signal || d.ai_bias || "",
+        ai_confidence:     d.ai_confidence ?? "",
+        news_sentiment:    d.news_sentiment || "",
+        macro_context:     d.macro_context || "",
+        volatility_context: d.volatility_context || "",
+        hold_off:          d.hold_off ? "true" : "false",
+        reason:            (d.ai_reason || d.ai_analysis_text || "").replace(/\n/g, " "),
+      }));
+      dlCSV("noticias_ia.csv", rows);
+    });
   }
 
   /* ── MODAL ── */
@@ -1222,6 +1546,9 @@
       renderPaperKpi(data);
       renderPaperTable();
       renderAggregator(data);
+      renderNewsKpi();
+      renderNewsCharts();
+      renderNewsTable();
     } catch (err) {
       const b = $("error-banner");
       b.textContent = "Falha ao carregar data.json — corre `python scripts/export_logs.py` (" + err.message + ")";
