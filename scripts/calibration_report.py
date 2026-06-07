@@ -108,6 +108,37 @@ def _print_aggregator_section(analysis):
         print(f"  - {reason}")
 
 
+def _print_rolling_context_section(conn):
+    print("\n=== ROLLING MARKET CONTEXT ===")
+    try:
+        ctx = database.get_latest_rolling_market_context(conn, "EUR/USD")
+    except Exception as e:
+        print(f"(indisponível: {type(e).__name__}: {e})")
+        return
+
+    if not ctx:
+        print("(sem contexto guardado ainda)")
+        return
+
+    print(f"created_at:          {ctx.get('created_at', '-')}")
+    print(f"market_phase:        {_fmt(ctx.get('market_phase'))}")
+    print(f"macro_bias:          {_fmt(ctx.get('macro_bias'))}")
+    print(f"technical_bias:      {_fmt(ctx.get('technical_bias'))}")
+    print(f"combined_bias:       {_fmt(ctx.get('combined_bias'))}")
+    print(f"confidence:          {_fmt(ctx.get('confidence'), '%')}")
+    print(f"risk_level:          {_fmt(ctx.get('risk_level'))}")
+    print(f"recommended_stance:  {_fmt(ctx.get('recommended_stance'))}")
+    print(f"likely_market_intent: {_fmt(ctx.get('likely_market_intent'))}")
+    print(f"short_summary:       {_fmt(ctx.get('short_summary'))}")
+    key_risks = ctx.get("key_risks") or []
+    if key_risks:
+        print("key_risks:")
+        for risk in key_risks:
+            print(f"  - {risk}")
+    else:
+        print("key_risks: -")
+
+
 def main():
     conn = database.connect()
     database.init_db(conn)
@@ -121,6 +152,7 @@ def main():
         for title, since_iso in sections:
             _print_section(title, database.get_calibration_summary(conn, since_iso=since_iso))
         _print_aggregator_section(database.get_aggregator_analysis(conn, since_iso=_since(days=7)))
+        _print_rolling_context_section(conn)
     finally:
         conn.close()
 

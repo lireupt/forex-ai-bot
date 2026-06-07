@@ -16,6 +16,7 @@ from modules.ai_analyst import (
 from modules import ai_aggregator
 from modules import context_snapshot
 from modules import database
+from modules import rolling_context
 from modules.market import forex_market_state, is_forex_market_open
 from modules.weekly_market_prep import (
     weekend_mode_config,
@@ -1389,6 +1390,11 @@ def _run_aggregator_shadow(
             latest_prep = database.get_latest_weekly_market_prep(conn, PAIR)
         except Exception:
             pass
+        latest_rolling = None
+        try:
+            latest_rolling = database.get_latest_rolling_market_context(conn, PAIR)
+        except Exception:
+            pass
         snapshot = context_snapshot.build_market_snapshot(
             PAIR,
             technical_result,
@@ -1401,12 +1407,85 @@ def _run_aggregator_shadow(
             performance,
             gating_mode=gating_mode,
             latest_weekly_market_prep=latest_prep,
+            latest_rolling_context=latest_rolling,
         )
         result = ai_aggregator.analyse(snapshot)
         return result, snapshot
     except Exception as e:
         print(f"[aggregator] shadow falhou (não-fatal): {type(e).__name__}: {e}")
         return None, None
+
+
+def _run_rolling_context(
+    conn,
+    technical_result,
+    ai_result,
+    combined,
+    gating_combined,
+    trade_decision,
+    gate_context,
+    event_risk,
+    risk_performance,
+    gating_mode,
+    aggregator_result,
+):
+    """Atualiza o Rolling Market Context (memória contextual do mercado).
+
+    Sempre não-fatal. NÃO abre trades, NÃO bloqueia trades, NÃO altera gating.
+    Activado por ROLLING_CONTEXT_ENABLED (default off).
+    """
+    if not _env_bool("ROLLING_CONTEXT_ENABLED", False):
+        return None
+    if not _env_bool("ROLLING_CONTEXT_UPDATE_EVERY_CYCLE", True):
+        return None
+    try:
+        performance = context_snapshot.build_performance_snapshot(
+            conn, PAIR, recent_performance=risk_performance
+        )
+        latest_prep = None
+        try:
+            latest_prep = database.get_latest_weekly_market_prep(conn, PAIR)
+        except Exception:
+            pass
+        latest_rolling = None
+        try:
+            latest_rolling = database.get_latest_rolling_market_context(conn, PAIR)
+        except Exception:
+            pass
+        snapshot = context_snapshot.build_market_snapshot(
+            PAIR,
+            technical_result,
+            ai_result,
+            combined,
+            gating_combined,
+            trade_decision,
+            gate_context,
+            event_risk,
+            performance,
+            gating_mode=gating_mode,
+            latest_weekly_market_prep=latest_prep,
+            latest_rolling_context=latest_rolling,
+        )
+        provider = (
+            os.getenv("ROLLING_CONTEXT_PROVIDER")
+            or os.getenv("AI_PROVIDER")
+            or "groq"
+        ).strip().lower()
+        lookback_hours = _env_int("ROLLING_CONTEXT_LOOKBACK_HOURS", 24)
+        max_prev_chars = _env_int("ROLLING_CONTEXT_MAX_PREVIOUS_SUMMARY_CHARS", 2500)
+        result = rolling_context.update(
+            conn,
+            pair=PAIR,
+            snapshot=snapshot,
+            aggregator_result=aggregator_result,
+            provider=provider,
+            lookback_hours=lookback_hours,
+            max_prev_chars=max_prev_chars,
+        )
+        return result
+    except Exception as e:
+        print(f"[rolling-context] ciclo falhou (não-fatal): {type(e).__name__}: {e}")
+        return None
 
 
 def _recent_risk_performance(conn, pair, limit=30):
@@ -1715,6 +1794,28 @@ def main():
         risk_performance,
         gating_mode_used,
     )
+
+    rolling_context_result = _run_rolling_context(
+        conn,
+        technical_result,
+        ai_result,
+        combined,
+        gating_combined,
+        trade_decision,
+        gate_context,
+        event_risk,
+        risk_performance,
+        gating_mode_used,
+        aggregator_result,
+    )
+    if rolling_context_result is not None:
+        print(
+            f"[rolling-context] phase={rolling_context_result.get('market_phase')} "
+            f"bias={rolling_context_result.get('combined_bias')} "
+            f"conf={rolling_context_result.get('confidence')}% "
+            f"stance={rolling_context_result.get('recommended_stance')} "
+            f"risk={rolling_context_result.get('risk_level')}"
+        )
 
     _print_final(ai_result, technical_result, combined, trade_decision)
     print()

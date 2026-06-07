@@ -56,6 +56,7 @@ def build_market_snapshot(
     performance,
     gating_mode=None,
     latest_weekly_market_prep=None,
+    latest_rolling_context=None,
 ):
     """Monta o snapshot estruturado completo (input da IA agregadora)."""
     technical_result = technical_result or {}
@@ -156,6 +157,25 @@ def build_market_snapshot(
             "warnings": latest_weekly_market_prep.get("warnings") or [],
             "week_start": latest_weekly_market_prep.get("week_start"),
             "created_at": latest_weekly_market_prep.get("created_at"),
+        }
+
+    if latest_rolling_context:
+        snapshot["latest_rolling_market_context"] = {
+            "id": latest_rolling_context.get("id"),
+            "created_at": latest_rolling_context.get("created_at"),
+            "market_phase": latest_rolling_context.get("market_phase"),
+            "macro_bias": latest_rolling_context.get("macro_bias"),
+            "technical_bias": latest_rolling_context.get("technical_bias"),
+            "combined_bias": latest_rolling_context.get("combined_bias"),
+            "confidence": latest_rolling_context.get("confidence"),
+            "risk_level": latest_rolling_context.get("risk_level"),
+            "short_summary": latest_rolling_context.get("short_summary"),
+            "what_changed": latest_rolling_context.get("what_changed"),
+            "likely_market_intent": latest_rolling_context.get("likely_market_intent"),
+            "recommended_stance": latest_rolling_context.get("recommended_stance"),
+            "should_trade_bias": latest_rolling_context.get("should_trade_bias"),
+            "should_reduce_risk": latest_rolling_context.get("should_reduce_risk"),
+            "key_risks": latest_rolling_context.get("key_risks") or [],
         }
 
     return snapshot

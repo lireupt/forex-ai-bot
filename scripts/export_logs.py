@@ -674,6 +674,23 @@ def _read_latest_weekly_market_prep(pair="EUR/USD"):
         return None
 
 
+def _read_rolling_market_context(pair="EUR/USD", recent_limit=24):
+    """Lê o latest e os recentes rolling market context da DB."""
+    if not DB_PATH.exists():
+        return {"latest": None, "recent": []}
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            latest = database.get_latest_rolling_market_context(conn, pair)
+            recent = database.get_recent_rolling_market_context(conn, pair, limit=recent_limit)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {"latest": None, "recent": []}
+    return {"latest": latest, "recent": recent}
+
+
 def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -693,6 +710,9 @@ def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
     calibration = _read_calibration_summary() if source == "sqlite" else {}
     aggregator_analysis = _read_aggregator_analysis() if source == "sqlite" else {}
     latest_weekly_market_prep = _read_latest_weekly_market_prep() if source == "sqlite" else None
+    rolling_market_context = (
+        _read_rolling_market_context() if source == "sqlite" else {"latest": None, "recent": []}
+    )
 
     payload = {
         "summary": summary,
@@ -706,6 +726,7 @@ def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
         "weekly_market_prep": {
             "latest": latest_weekly_market_prep,
         },
+        "rolling_market_context": rolling_market_context,
     }
 
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")

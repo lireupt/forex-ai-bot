@@ -218,6 +218,30 @@ def init_db(conn):
             model_version TEXT,
             status TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS rolling_market_context (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            pair TEXT NOT NULL,
+            previous_context_id INTEGER,
+            market_phase TEXT,
+            macro_bias TEXT,
+            technical_bias TEXT,
+            combined_bias TEXT,
+            confidence INTEGER,
+            risk_level TEXT,
+            short_summary TEXT,
+            what_changed TEXT,
+            persistent_factors_json TEXT,
+            new_factors_json TEXT,
+            invalidated_factors_json TEXT,
+            key_risks_json TEXT,
+            likely_market_intent TEXT,
+            recommended_stance TEXT,
+            should_trade_bias INTEGER,
+            should_reduce_risk INTEGER,
+            raw_response_json TEXT
+        );
         """
     )
     _ensure_ai_analysis_columns(conn)
@@ -1941,3 +1965,127 @@ def get_latest_weekly_market_prep(conn, pair="EUR/USD"):
     record["market_opening_risks"] = _jload(record.pop("market_opening_risks_json", None), [])
     record["warnings"] = _jload(record.pop("warnings_json", None), [])
     return record
+
+
+# ---------------------------------------------------------------------------
+# Rolling Market Context helpers
+# ---------------------------------------------------------------------------
+
+def save_rolling_market_context(conn, pair, data, previous_context_id=None, raw_response=None):
+    """Persiste um novo rolling market context. Devolve o id inserido."""
+    now = utc_now()
+
+    def _jdump(value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False)
+
+    conn.execute(
+        """
+        INSERT INTO rolling_market_context
+        (created_at, pair, previous_context_id,
+         market_phase, macro_bias, technical_bias, combined_bias,
+         confidence, risk_level, short_summary, what_changed,
+         persistent_factors_json, new_factors_json, invalidated_factors_json,
+         key_risks_json, likely_market_intent, recommended_stance,
+         should_trade_bias, should_reduce_risk, raw_response_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            now,
+            pair,
+            previous_context_id,
+            data.get("market_phase"),
+            data.get("macro_bias"),
+            data.get("technical_bias"),
+            data.get("combined_bias"),
+            data.get("confidence"),
+            data.get("risk_level"),
+            data.get("short_summary"),
+            data.get("what_changed"),
+            _jdump(data.get("persistent_factors")),
+            _jdump(data.get("new_factors")),
+            _jdump(data.get("invalidated_factors")),
+            _jdump(data.get("key_risks")),
+            data.get("likely_market_intent"),
+            data.get("recommended_stance"),
+            1 if data.get("should_trade_bias") else 0,
+            1 if data.get("should_reduce_risk") else 0,
+            _jdump(raw_response),
+        ),
+    )
+    conn.commit()
+    return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+
+def _decode_rolling_context_row(row):
+    """Converte uma row da tabela rolling_market_context em dict legível."""
+    if row is None:
+        return None
+    record = dict(row)
+
+    def _jload(value, default):
+        if not value:
+            return default
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return default
+
+    record["persistent_factors"] = _jload(record.pop("persistent_factors_json", None), [])
+    record["new_factors"] = _jload(record.pop("new_factors_json", None), [])
+    record["invalidated_factors"] = _jload(record.pop("invalidated_factors_json", None), [])
+    record["key_risks"] = _jload(record.pop("key_risks_json", None), [])
+    record["should_trade_bias"] = bool(record.get("should_trade_bias"))
+    record["should_reduce_risk"] = bool(record.get("should_reduce_risk"))
+    return record
+
+
+def get_latest_rolling_market_context(conn, pair):
+    """Devolve o contexto mais recente para o par, ou None se não existir."""
+    try:
+        row = conn.execute(
+            """
+            SELECT id, created_at, pair, previous_context_id,
+                   market_phase, macro_bias, technical_bias, combined_bias,
+                   confidence, risk_level, short_summary, what_changed,
+                   persistent_factors_json, new_factors_json, invalidated_factors_json,
+                   key_risks_json, likely_market_intent, recommended_stance,
+                   should_trade_bias, should_reduce_risk
+            FROM rolling_market_context
+            WHERE pair = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (pair,),
+        ).fetchone()
+    except Exception:
+        return None
+    return _decode_rolling_context_row(row)
+
+
+def get_recent_rolling_market_context(conn, pair, limit=24):
+    """Devolve os contextos mais recentes para o par (mais antigo primeiro)."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, created_at, pair, previous_context_id,
+                   market_phase, macro_bias, technical_bias, combined_bias,
+                   confidence, risk_level, short_summary, what_changed,
+                   persistent_factors_json, new_factors_json, invalidated_factors_json,
+                   key_risks_json, likely_market_intent, recommended_stance,
+                   should_trade_bias, should_reduce_risk
+            FROM rolling_market_context
+            WHERE pair = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (pair, limit),
+        ).fetchall()
+    except Exception:
+        return []
+    result = [_decode_rolling_context_row(r) for r in rows]
+    result.reverse()
+    return result
