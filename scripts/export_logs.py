@@ -315,6 +315,10 @@ def _row_to_paper_trade(row):
         "close_reason": row.get("close_reason") or "",
         "result_pips": row.get("result_pips"),
         "result_r_multiple": row.get("result_r_multiple"),
+        "current_price": row.get("current_price"),
+        "last_price_checked_at": row.get("last_price_checked_at"),
+        "distance_to_tp_pips": row.get("distance_to_tp_pips"),
+        "distance_to_sl_pips": row.get("distance_to_sl_pips"),
     }
 
 
@@ -388,13 +392,30 @@ def _read_paper_trades_from_sqlite(limit=200):
         conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         try:
+            pt_cols = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(paper_trades)").fetchall()
+            }
+            monitor_expr = {
+                col: col if col in pt_cols else f"NULL AS {col}"
+                for col in (
+                    "current_price",
+                    "last_price_checked_at",
+                    "distance_to_tp_pips",
+                    "distance_to_sl_pips",
+                )
+            }
             rows = conn.execute(
-                """
+                f"""
                 SELECT id, decision_id, pair, timeframe, direction, entry_price,
                        simulated_sl, simulated_tp, sl_pips, tp_pips, atr_pips,
                        status, source, signal_source, created_at, expiry_at,
                        close_price, closed_at, close_reason, result_pips,
-                       result_r_multiple
+                       result_r_multiple,
+                       {monitor_expr["current_price"]},
+                       {monitor_expr["last_price_checked_at"]},
+                       {monitor_expr["distance_to_tp_pips"]},
+                       {monitor_expr["distance_to_sl_pips"]}
                 FROM paper_trades
                 ORDER BY id DESC
                 LIMIT ?

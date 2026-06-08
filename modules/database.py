@@ -393,6 +393,10 @@ def _ensure_paper_trades_columns(conn):
         "close_reason": "TEXT",
         "result_pips": "REAL",
         "result_r_multiple": "REAL",
+        "current_price": "REAL",
+        "last_price_checked_at": "TEXT",
+        "distance_to_tp_pips": "REAL",
+        "distance_to_sl_pips": "REAL",
     }
     for name, column_type in columns.items():
         if name not in existing:
@@ -943,6 +947,34 @@ def create_paper_trade(conn, paper_trade):
     )
     conn.commit()
     return cursor.lastrowid
+
+
+def update_paper_trade_monitor_price(
+    conn,
+    paper_trade_id,
+    current_price,
+    last_price_checked_at,
+    distance_to_tp_pips,
+    distance_to_sl_pips,
+):
+    conn.execute(
+        """
+        UPDATE paper_trades
+        SET current_price = ?,
+            last_price_checked_at = ?,
+            distance_to_tp_pips = ?,
+            distance_to_sl_pips = ?
+        WHERE id = ? AND status = 'open'
+        """,
+        (
+            current_price,
+            last_price_checked_at,
+            distance_to_tp_pips,
+            distance_to_sl_pips,
+            paper_trade_id,
+        ),
+    )
+    conn.commit()
 
 
 def get_open_paper_trades(conn, pair=None):

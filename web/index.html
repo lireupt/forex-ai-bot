@@ -357,7 +357,7 @@
       <span class="sep">·</span>
       <span id="hd-source">—</span>
       <span class="sep">·</span>
-      <span>auto-refresh 60s</span>
+      <span>auto-refresh 30s</span>
     </div>
   </div>
 </header>
@@ -434,6 +434,7 @@
       <div class="table-panel">
         <div class="table-toolbar" id="paper-toolbar">
           <button class="fp active" data-f="all">Todos</button>
+          <button class="fp warn" data-f="open">Open</button>
           <button class="fp" data-f="BUY">BUY</button>
           <button class="fp sell" data-f="SELL">SELL</button>
           <button class="fp" data-f="win">Win</button>
@@ -551,7 +552,7 @@
 <script>
 (function () {
   "use strict";
-  const REFRESH_MS = 60_000;
+  const REFRESH_MS = 30_000;
   const DATA_URL = "data.json";
   const PG = 25;
 
@@ -894,11 +895,12 @@
 
   /* ── PAPER TRADES ── */
   function filterPaper(list, f) {
-    if (f === "all") return list;
-    if (f === "BUY") return list.filter(t => t.direction === "BUY");
-    if (f === "SELL") return list.filter(t => t.direction === "SELL");
-    if (f === "win") return list.filter(t => t.status === "win");
-    if (f === "loss") return list.filter(t => t.status === "loss");
+    if (f === "open")    return list.filter(t => t.status === "open");
+    if (f === "all")     return list;
+    if (f === "BUY")     return list.filter(t => t.direction === "BUY");
+    if (f === "SELL")    return list.filter(t => t.direction === "SELL");
+    if (f === "win")     return list.filter(t => t.status === "win");
+    if (f === "loss")    return list.filter(t => t.status === "loss");
     if (f === "expired") return list.filter(t => t.status === "expired");
     return list;
   }
@@ -935,24 +937,47 @@
       return;
     }
 
-    const rows = pg.map(t => `<tr>
-      <td style="color:var(--muted);">#${t.id}</td>
-      <td style="color:var(--muted);font-size:11px;">${fmtTime(t.created_at)}</td>
-      <td><b>${esc(t.pair||"—")}</b></td>
-      <td>${pill(t.direction)}</td>
-      <td>${fmtN(t.entry_price,5)}</td>
-      <td>${fmtN(t.simulated_sl,5)}<span style="color:var(--muted);font-size:10px;"> ${fmtN(t.sl_pips,1)}p</span></td>
-      <td>${fmtN(t.simulated_tp,5)}<span style="color:var(--muted);font-size:10px;"> ${fmtN(t.tp_pips,1)}p</span></td>
-      <td><span class="pill ${t.status}">${t.status}</span></td>
-      <td style="color:${t.result_pips>=0?"var(--buy)":"var(--sell)"};">${t.result_pips!=null?fmtN(t.result_pips,1)+" p":"—"}</td>
-      <td>${t.result_r_multiple!=null?fmtN(t.result_r_multiple,2)+"R":"—"}</td>
-      <td style="color:var(--muted);font-size:10px;">${esc(t.source||"")}</td>
-    </tr>`).join("");
+    const rows = pg.map(t => {
+      const isOpen = t.status === "open";
+      const monitorPrice = isOpen && t.current_price != null
+        ? `<b>${fmtN(t.current_price, 5)}</b>`
+        : "—";
+      const lastCheck = isOpen
+        ? (t.last_price_checked_at
+            ? `<span style="font-size:10px;">${fmtTime(t.last_price_checked_at)}</span>`
+            : `<span style="color:var(--muted);font-style:italic;font-size:10px;">Ainda não verificado</span>`)
+        : "—";
+      const distTp = isOpen && t.distance_to_tp_pips != null
+        ? `<span style="color:var(--buy);font-weight:600;">${fmtN(t.distance_to_tp_pips,1)}p</span>`
+        : "—";
+      const distSl = isOpen && t.distance_to_sl_pips != null
+        ? `<span style="color:var(--sell);">${fmtN(t.distance_to_sl_pips,1)}p</span>`
+        : "—";
+      return `<tr>
+        <td style="color:var(--muted);">#${t.id}</td>
+        <td style="color:var(--muted);font-size:11px;">${fmtTime(t.created_at)}</td>
+        <td><b>${esc(t.pair||"—")}</b></td>
+        <td>${pill(t.direction)}</td>
+        <td>${fmtN(t.entry_price,5)}</td>
+        <td>${fmtN(t.simulated_sl,5)}<span style="color:var(--muted);font-size:10px;"> ${fmtN(t.sl_pips,1)}p</span></td>
+        <td>${fmtN(t.simulated_tp,5)}<span style="color:var(--muted);font-size:10px;"> ${fmtN(t.tp_pips,1)}p</span></td>
+        <td><span class="pill ${t.status}">${t.status}</span></td>
+        <td>${monitorPrice}</td>
+        <td>${lastCheck}</td>
+        <td>${distTp}</td>
+        <td>${distSl}</td>
+        <td style="color:${(t.result_pips||0)>=0?"var(--buy)":"var(--sell)"};">${t.result_pips!=null?fmtN(t.result_pips,1)+" p":"—"}</td>
+        <td>${t.result_r_multiple!=null?fmtN(t.result_r_multiple,2)+"R":"—"}</td>
+        <td style="color:var(--muted);font-size:10px;">${esc(t.source||"")}</td>
+      </tr>`;
+    }).join("");
 
     $("paper-table-host").innerHTML = `<table class="dt"><thead><tr>
       <th>ID</th><th>Data</th><th>Par</th><th>Dir</th>
-      <th>Entrada</th><th>SL</th><th>TP</th>
-      <th>Estado</th><th>Pips</th><th>R</th><th>Origem</th>
+      <th>Entrada</th><th>SL</th><th>TP</th><th>Estado</th>
+      <th>Current Price</th><th>Last Price Check</th>
+      <th>Dist TP</th><th>Dist SL</th>
+      <th>Pips</th><th>R</th><th>Origem</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
     renderPg("paper-pages", paperSt, totalPg, renderPaperTable);
   }
