@@ -400,8 +400,11 @@ def _ai_context_score(ai_result):
         adjustment = float(adjustment)
     except (TypeError, ValueError):
         adjustment = 0.0
-    adjustment = max(-0.25, min(0.25, adjustment))
-    return round(_direction_score(bias) * adjustment, 4)
+    # Usar apenas a magnitude; a direcção é sempre definida por `bias`.
+    # Sem abs(), um confidence_adjustment negativo + bias=SELL produzia dupla
+    # negação e o score apontava para BUY: -1 × -0.10 = +0.10.
+    magnitude = min(0.25, abs(adjustment))
+    return round(_direction_score(bias) * magnitude, 4)
 
 
 def _ai_abstains(ai_result):
@@ -1017,8 +1020,9 @@ def _build_decision_entry(
             details["shadow_technical_confidence"],
         )
     if combined_score is None:
+        _ai_for_combine = None if _ai_abstains(ai_result) else ai_score
         combined_score = scoring.combine_scores(
-            ai_score, technical_score, shadow_score=shadow_score, config=scoring_config
+            _ai_for_combine, technical_score, shadow_score=shadow_score, config=scoring_config
         )
     if score_combined_signal is None:
         score_combined_signal = scoring.score_to_signal(combined_score, scoring_config)
@@ -1836,6 +1840,22 @@ def main():
         f"tech={technical_score_value:+.2f} "
         f"shadow={shadow_score_value:+.2f} combined={combined_score_value:+.2f} "
         f"-> {score_signal_value}"
+    )
+    _ai_conf_raw = ai_result.get("confidence") or 0
+    _ai_adj = ai_result.get("confidence_adjustment") or 0.0
+    _w = scoring_config
+    _nr = combined.get("neutral_reason") or ""
+    print(
+        f"[scoring-pipeline] "
+        f"ai_signal={ai_result.get('signal', 'NEUTRAL')} "
+        f"conf_adj={float(_ai_adj):+.4f} "
+        f"ai_conf={_ai_conf_raw} "
+        f"ai_score={ai_score_value:+.4f}"
+        f"{' (abstém — conf<' + str(int(_env_float('AI_VOTE_MIN_CONFIDENCE', 35.0))) + ')' if not ai_voted else ''} "
+        f"tech_score={technical_score_value:+.4f} "
+        f"pesos=[AI={_w['ai_weight']:.2f} tech={_w['technical_weight']:.2f} news={_w.get('news_weight', 0.0):.2f}] "
+        f"combined={combined_score_value:+.4f} -> {score_signal_value}"
+        + (f" neutral_reason={_nr}" if score_signal_value == "NEUTRAL" and _nr else "")
     )
     print(
         f"Multi-TF: M15={technical_result.get('technical_score_m15'):+.2f} "
