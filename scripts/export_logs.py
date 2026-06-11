@@ -290,6 +290,16 @@ def _normalise(row, paper_trade_lookup=None):
         "ai_aggregated_warnings": _parse_json_list(_agg.get("ai_aggregated_warnings", _agg.get("warnings"))),
         "ai_aggregated_status": _agg.get("ai_aggregated_status") or _agg.get("status") or None,
         "ai_aggregated_model_version": _agg.get("ai_aggregated_model_version") or _agg.get("model_version") or None,
+        "macro_risk_level": row.get("macro_risk_level") or "none",
+        "macro_block": _coerce_bool(row.get("macro_block")),
+        "macro_event_title": row.get("macro_event_title") or "",
+        "macro_event_currency": row.get("macro_event_currency") or "",
+        "macro_event_time": row.get("macro_event_time") or "",
+        "macro_minutes_distance": _coerce_float(row.get("macro_minutes_distance")),
+        "macro_reason": row.get("macro_reason") or "",
+        "macro_context_snapshot": _parse_json_obj(
+            row.get("macro_context_snapshot_json") or row.get("macro_context_snapshot")
+        ),
     }
 
 
@@ -477,6 +487,12 @@ def _read_from_sqlite(limit):
                 "ai_aggregated_warnings", "ai_aggregated_status", "ai_aggregated_model_version",
             ):
                 cols_expr[_agg_col] = _agg_col if _agg_col in cols else f"NULL AS {_agg_col}"
+            for _macro_col in (
+                "macro_risk_level", "macro_block", "macro_event_title",
+                "macro_event_currency", "macro_event_time", "macro_minutes_distance",
+                "macro_reason", "macro_context_snapshot_json",
+            ):
+                cols_expr[_macro_col] = _macro_col if _macro_col in cols else f"NULL AS {_macro_col}"
             rows = conn.execute(
                 f"""
                 SELECT timestamp, pair, timeframe, ai_signal, technical_signal,
@@ -523,7 +539,15 @@ def _read_from_sqlite(limit):
                        {cols_expr['ai_aggregated_contradicting_factors']},
                        {cols_expr['ai_aggregated_warnings']},
                        {cols_expr['ai_aggregated_status']},
-                       {cols_expr['ai_aggregated_model_version']}
+                       {cols_expr['ai_aggregated_model_version']},
+                       {cols_expr['macro_risk_level']},
+                       {cols_expr['macro_block']},
+                       {cols_expr['macro_event_title']},
+                       {cols_expr['macro_event_currency']},
+                       {cols_expr['macro_event_time']},
+                       {cols_expr['macro_minutes_distance']},
+                       {cols_expr['macro_reason']},
+                       {cols_expr['macro_context_snapshot_json']}
                 FROM decisions
                 ORDER BY id DESC
                 LIMIT ?

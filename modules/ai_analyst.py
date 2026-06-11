@@ -97,7 +97,13 @@ def _format_technical(technical):
     return "\n".join(lines)
 
 
-def _build_user_message(news, events, pair, technical=None):
+def _format_macro_snapshot(snapshot):
+    if not snapshot:
+        return "(sem snapshot macro disponível)"
+    return json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _build_user_message(news, events, pair, technical=None, macro_context_snapshot=None):
     sections = [
         f"Par: {pair}",
         "",
@@ -106,6 +112,9 @@ def _build_user_message(news, events, pair, technical=None):
         "",
         "EVENTOS ECONÓMICOS DE ALTO IMPACTO:",
         _format_events(events),
+        "",
+        "SNAPSHOT DO FILTRO MACRO PARA ESTA DECISÃO:",
+        _format_macro_snapshot(macro_context_snapshot),
     ]
 
     technical_block = _format_technical(technical)
@@ -116,8 +125,20 @@ def _build_user_message(news, events, pair, technical=None):
     return "\n".join(sections)
 
 
-def build_analysis_input(news, events, pair="EUR/USD", technical=None):
-    return _build_user_message(news, events, pair, technical=technical)
+def build_analysis_input(
+    news,
+    events,
+    pair="EUR/USD",
+    technical=None,
+    macro_context_snapshot=None,
+):
+    return _build_user_message(
+        news,
+        events,
+        pair,
+        technical=technical,
+        macro_context_snapshot=macro_context_snapshot,
+    )
 
 
 def _fallback(provider, error_msg):
@@ -256,9 +277,15 @@ def _analyse_claude(user_message):
     return text
 
 
-def analyse(news, events, pair="EUR/USD", technical=None):
+def analyse(news, events, pair="EUR/USD", technical=None, macro_context_snapshot=None):
     provider = (os.getenv("AI_PROVIDER") or "groq").strip().lower()
-    user_message = _build_user_message(news, events, pair, technical=technical)
+    user_message = _build_user_message(
+        news,
+        events,
+        pair,
+        technical=technical,
+        macro_context_snapshot=macro_context_snapshot,
+    )
     max_retries = int(float(os.getenv("AI_MAX_RETRIES") or 3))
     backoff_seconds = float(os.getenv("AI_RETRY_BACKOFF_SECONDS") or 5)
 

@@ -360,6 +360,15 @@ def _ensure_decisions_columns(conn):
         "ai_aggregated_warnings": "TEXT",
         "ai_aggregated_status": "TEXT",
         "ai_aggregated_model_version": "TEXT",
+        # Macro Economic Calendar Filter fields
+        "macro_risk_level": "TEXT",
+        "macro_block": "INTEGER",
+        "macro_event_title": "TEXT",
+        "macro_event_currency": "TEXT",
+        "macro_event_time": "TEXT",
+        "macro_minutes_distance": "REAL",
+        "macro_reason": "TEXT",
+        "macro_context_snapshot_json": "TEXT",
     }
     for name, column_type in columns.items():
         if name not in existing:
@@ -732,8 +741,11 @@ def save_decision(conn, entry):
          combined_reason, blocking_reason, score_combined_signal,
          gating_mode, gating_signal, gating_confidence, adx_value,
          gate_diagnostics_json, ai_status, neutral_reason, operational_mode,
-         operational_can_trade, operational_block_reason, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         operational_can_trade, operational_block_reason,
+         macro_risk_level, macro_block, macro_event_title, macro_event_currency,
+         macro_event_time, macro_minutes_distance, macro_reason,
+         macro_context_snapshot_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             entry["timestamp"],
@@ -817,6 +829,16 @@ def save_decision(conn, entry):
             entry.get("operational_mode"),
             int(bool(entry.get("operational_can_trade"))),
             entry.get("operational_block_reason"),
+            entry.get("macro_risk_level"),
+            int(bool(entry.get("macro_block"))) if entry.get("macro_block") is not None else 0,
+            entry.get("macro_event_title"),
+            entry.get("macro_event_currency"),
+            entry.get("macro_event_time"),
+            entry.get("macro_minutes_distance"),
+            entry.get("macro_reason"),
+            json.dumps(entry.get("macro_context_snapshot"), ensure_ascii=False)
+            if entry.get("macro_context_snapshot") is not None
+            else None,
             utc_now(),
         ),
     )

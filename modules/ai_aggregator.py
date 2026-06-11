@@ -94,6 +94,7 @@ def _build_user_message(snapshot):
     performance = snapshot.get("performance") or {}
     filters = snapshot.get("filters") or {}
     preliminary = snapshot.get("preliminary_recommendation") or {}
+    macro = snapshot.get("macro_calendar") or {}
 
     technical_lines = [
         f"- Preço actual: {technical.get('current_price')}",
@@ -117,6 +118,16 @@ def _build_user_message(snapshot):
         f"- Evento high-impact próximo: {fundamental.get('dangerous_event_nearby')} "
         f"({fundamental.get('dangerous_event_reason') or 'n/a'})",
         f"- Leitura IA: {fundamental.get('ai_reason') or 'n/a'}",
+    ]
+    macro_lines = [
+        f"- Nível de risco: {macro.get('risk_level', 'none')}",
+        f"- Bloqueio macro: {macro.get('block', False)}",
+        f"- Evento relevante: {macro.get('event_title') or 'n/a'}",
+        f"- Moeda: {macro.get('event_currency') or 'n/a'}",
+        f"- Hora UTC: {macro.get('event_time') or 'n/a'}",
+        f"- Distância (minutos): {macro.get('minutes_distance')}",
+        f"- Razão: {macro.get('reason') or 'n/a'}",
+        f"- Snapshot de eventos próximos: {json.dumps(macro.get('context_snapshot') or {}, ensure_ascii=False)}",
     ]
 
     operational_lines = [
@@ -160,6 +171,8 @@ def _build_user_message(snapshot):
         _format_block("CAMADA 1 — TÉCNICO", technical_lines),
         "",
         _format_block("CAMADA 2 — FUNDAMENTAL/EVENTOS", fundamental_lines),
+        "",
+        _format_block("CALENDÁRIO MACRO DA DECISÃO", macro_lines),
         "",
         _format_block("CAMADA 3 — PERFORMANCE/CONTEXTO RECENTE", performance_lines),
         "",

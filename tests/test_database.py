@@ -117,6 +117,9 @@ class TestSchema:
             "combined_reason", "blocking_reason", "score_combined_signal", "paper_trade_id",
             "operational_mode", "operational_can_trade", "operational_block_reason",
             "decision_hash", "is_duplicate",
+            "macro_risk_level", "macro_block", "macro_event_title",
+            "macro_event_currency", "macro_event_time", "macro_minutes_distance",
+            "macro_reason", "macro_context_snapshot_json",
         ]:
             assert col in cols, f"coluna {col} em falta"
 
@@ -184,6 +187,30 @@ class TestSaveDecision:
         assert row["is_duplicate"] == 0
         # snapshot é guardado como JSON string
         assert '"close":' in row["ai_features_snapshot"]
+
+    def test_persists_macro_filter_fields(self, memory_db):
+        entry = _make_decision_entry(
+            macro_risk_level="high",
+            macro_block=True,
+            macro_event_title="FOMC Statement",
+            macro_event_currency="USD",
+            macro_event_time="2026-06-11T18:00:00+00:00",
+            macro_minutes_distance=-12.0,
+            macro_reason="high_impact_macro_event",
+            macro_context_snapshot={
+                "has_macro_block": True,
+                "has_confidence_reduction": False,
+            },
+        )
+        decision_id = database.save_decision(memory_db, entry)
+        row = memory_db.execute(
+            "SELECT * FROM decisions WHERE id = ?", (decision_id,)
+        ).fetchone()
+        assert row["macro_risk_level"] == "high"
+        assert row["macro_block"] == 1
+        assert row["macro_event_title"] == "FOMC Statement"
+        assert row["macro_minutes_distance"] == -12.0
+        assert '"has_macro_block": true' in row["macro_context_snapshot_json"]
 
     def test_persists_duplicate_flag_without_skipping_insert(self, memory_db):
         first_id = database.save_decision(

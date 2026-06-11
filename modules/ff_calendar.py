@@ -47,7 +47,8 @@ _INV_PAGE    = "https://www.investing.com/economic-calendar/"
 _INV_AJAX    = "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData"
 # country codes on Investing.com (confirmed by inspection):
 # USD=5, EUR=17, GBP=4, JPY=35, CAD=12, AUD=6, CHF=25, NZD=26, CNY=37
-_INV_COUNTRIES = "country[]=5&country[]=17&country[]=4&country[]=35&country[]=12&country[]=6&country[]=25&country[]=26&country[]=37"
+# EU/ECB=72 — needed for ECB rate decisions, press conferences, Lagarde speeches
+_INV_COUNTRIES = "country[]=5&country[]=17&country[]=72&country[]=4&country[]=35&country[]=12&country[]=6&country[]=25&country[]=26&country[]=37"
 _INV_IMPACTS   = "importance[]=1&importance[]=2&importance[]=3"
 # timeZone=55 = UTC on Investing.com
 _INV_TIMEZONE  = "timeZone=55"

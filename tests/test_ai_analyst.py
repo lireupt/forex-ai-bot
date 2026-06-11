@@ -81,6 +81,22 @@ class TestBuildAnalysisInput:
         with_tech = ai_analyst.build_analysis_input([], [], "EUR/USD", technical=SAMPLE_TECHNICAL)
         assert without != with_tech
 
+    def test_includes_macro_context_snapshot(self):
+        snapshot = {
+            "next_event": {"title": "CPI", "currency": "USD", "minutes_distance": 12},
+            "has_macro_block": False,
+            "has_confidence_reduction": True,
+        }
+        text = ai_analyst.build_analysis_input(
+            [],
+            [],
+            "EUR/USD",
+            macro_context_snapshot=snapshot,
+        )
+        assert "SNAPSHOT DO FILTRO MACRO" in text
+        assert '"title": "CPI"' in text
+        assert '"has_confidence_reduction": true' in text
+
 
 class TestAnalyseFallback:
     def test_fallback_when_provider_invalid(self, monkeypatch):

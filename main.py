@@ -17,6 +17,7 @@ from modules import ai_aggregator
 from modules import context_snapshot
 from modules import database
 from modules import rolling_context
+from modules.macro_filter import get_macro_risk
 from modules.market import forex_market_state, is_forex_market_open
 from modules.weekly_market_prep import (
     weekend_mode_config,
@@ -358,8 +359,22 @@ def _get_multi_timeframe_technical(conn, cache_config, count=260):
     return h1_result, candles_by_tf.get("h1"), origins, warnings
 
 
-def _get_ai_result(conn, cache_config, provider, news, events, technical=None):
-    input_text = build_analysis_input(news, events, PAIR, technical=technical)
+def _get_ai_result(
+    conn,
+    cache_config,
+    provider,
+    news,
+    events,
+    technical=None,
+    macro_context_snapshot=None,
+):
+    input_text = build_analysis_input(
+        news,
+        events,
+        PAIR,
+        technical=technical,
+        macro_context_snapshot=macro_context_snapshot,
+    )
     input_hash = hashlib.sha256(input_text.encode("utf-8")).hexdigest()
     today = datetime.now(timezone.utc).date().isoformat()
 
@@ -368,7 +383,13 @@ def _get_ai_result(conn, cache_config, provider, news, events, technical=None):
         if cached:
             return cached, input_hash, "cache"
 
-    result = analyse_ai(news, events, PAIR, technical=technical)
+    result = analyse_ai(
+        news,
+        events,
+        PAIR,
+        technical=technical,
+        macro_context_snapshot=macro_context_snapshot,
+    )
     if result.get("status") != "failed":
         database.save_ai_analysis(conn, PAIR, today, input_hash, result)
     return result, input_hash, "fresh"
@@ -1667,6 +1688,7 @@ def main():
     print("[2/4] A ler calendário (RSS económico + FX Street)...")
     events, event_sources, events_origin = _get_events(conn, cache_config)
     print(f"      {len(events)} eventos únicos de alto impacto ({events_origin})")
+    macro_result = get_macro_risk(PAIR, datetime.now(timezone.utc), events=events)
 
     print()
     _print_sources(news_sources, event_sources)
@@ -1690,7 +1712,13 @@ def main():
 
     print("[4/4] A analisar com IA (com snapshot técnico)...")
     ai_result, input_hash, ai_origin = _get_ai_result(
-        conn, cache_config, provider, relevant_news, events, technical=technical_result
+        conn,
+        cache_config,
+        provider,
+        relevant_news,
+        events,
+        technical=technical_result,
+        macro_context_snapshot=macro_result["macro_context_snapshot"],
     )
     print(f"      análise IA: {ai_origin} ({input_hash[:12]})")
 
@@ -1738,6 +1766,33 @@ def main():
         _env_int("EVENT_BLOCK_WINDOW_MINUTES", 120),
         relevant_currencies=_pair_currencies(PAIR),
     )
+
+    # ── Macro Economic Calendar Filter ───────────────────────────────────────
+    if macro_result["macro_block"]:
+        print(
+            f"[MACRO FILTER] Trade blocked\n"
+            f"  Pair: {PAIR}\n"
+            f"  Event: {macro_result['macro_event_title']}\n"
+            f"  Currency: {macro_result['macro_event_currency']}\n"
+            f"  Minutes distance: {macro_result['macro_minutes_distance']}\n"
+            f"  Reason: {macro_result['macro_reason']}"
+        )
+    elif macro_result["macro_risk_level"] == "medium":
+        factor = _env_float("MACRO_MEDIUM_IMPACT_CONFIDENCE_FACTOR", 0.8)
+        original_conf = gating_combined.get("confidence", 0) / 100.0
+        adjusted_conf = original_conf * factor
+        gating_combined = dict(gating_combined)
+        gating_combined["confidence"] = int(round(adjusted_conf * 100))
+        print(
+            f"[MACRO FILTER] Confidence reduced\n"
+            f"  Pair: {PAIR}\n"
+            f"  Event: {macro_result['macro_event_title']}\n"
+            f"  Currency: {macro_result['macro_event_currency']}\n"
+            f"  Original confidence: {original_conf:.2f}\n"
+            f"  Adjusted confidence: {adjusted_conf:.2f}"
+        )
+    # ── End Macro Filter ─────────────────────────────────────────────────────
+
     market_state = forex_market_state()
     paper_source = "combined"
     op_state = operational_state(
@@ -1776,6 +1831,7 @@ def main():
         "neutral_reason": combined.get("neutral_reason"),
         "signal_persistence": signal_persistence,
         "performance": risk_performance,
+        "macro": macro_result,
     }
     trade_decision = evaluate_trade(
         PAIR,
@@ -1786,6 +1842,16 @@ def main():
         technical_indicators=technical_result.get("indicators", {}),
         gate_context=gate_context,
     )
+
+    # Apply macro block after evaluate_trade so all gate diagnostics are intact
+    if macro_result["macro_block"]:
+        trade_decision["trade_allowed"] = False
+        trade_decision["simulated_order"] = None
+        trade_decision["block_reason"] = "high_impact_macro_event"
+        trade_decision.setdefault("gate_reasons", [])
+        if "high_impact_macro_event" not in trade_decision["gate_reasons"]:
+            trade_decision["gate_reasons"].append("high_impact_macro_event")
+
     aggregator_result, aggregator_snapshot = _run_aggregator_shadow(
         conn,
         technical_result,
@@ -1910,6 +1976,16 @@ def main():
     decision_entry["is_duplicate"] = is_duplicate
     if aggregator_result is not None:
         decision_entry["ai_aggregated"] = aggregator_result
+
+    # Macro filter fields
+    decision_entry["macro_risk_level"] = macro_result["macro_risk_level"]
+    decision_entry["macro_block"] = macro_result["macro_block"]
+    decision_entry["macro_event_title"] = macro_result["macro_event_title"]
+    decision_entry["macro_event_currency"] = macro_result["macro_event_currency"]
+    decision_entry["macro_event_time"] = macro_result["macro_event_time"]
+    decision_entry["macro_minutes_distance"] = macro_result["macro_minutes_distance"]
+    decision_entry["macro_reason"] = macro_result["macro_reason"]
+    decision_entry["macro_context_snapshot"] = macro_result["macro_context_snapshot"]
 
     jsonl_saved, jsonl_error = _save_jsonl(decision_entry)
     sqlite_saved, sqlite_error, decision_id = _save_sqlite_decision(conn, decision_entry)

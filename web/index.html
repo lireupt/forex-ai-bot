@@ -221,6 +221,9 @@
     .pill.blocked { background: rgba(245,166,35,.15); color: var(--warn); }
     .pill.allowed { background: rgba(46,194,126,.15); color: var(--buy); }
     .pill.event { background: rgba(237,66,69,.15); color: var(--sell); }
+    .pill.macro-high { background: rgba(237,66,69,.15); color: var(--sell); }
+    .pill.macro-medium { background: rgba(245,166,35,.15); color: var(--warn); }
+    .pill.macro-none { background: rgba(138,147,163,.15); color: var(--neutral); }
     .pill.win { background: rgba(46,194,126,.15); color: var(--buy); }
     .pill.loss { background: rgba(237,66,69,.15); color: var(--sell); }
     .pill.expired { background: rgba(138,147,163,.15); color: var(--neutral); }
@@ -732,11 +735,46 @@
     const left = n >= 0 ? "50%" : `${50-pct}%`;
     return `<span class="sbar"><span class="f${n<0?" n":""}" style="left:${left};width:${pct}%;"></span></span>${fmtScore(n)}`;
   }
+  function macroRiskLevel(d) {
+    const level = String(d?.macro_risk_level || "none").toLowerCase();
+    return ["high", "medium"].includes(level) ? level : "none";
+  }
+  function macroDistance(v) {
+    if (v == null || v === "") return "—";
+    const minutes = Number(v);
+    if (isNaN(minutes)) return "—";
+    const amount = Math.abs(Math.round(minutes));
+    if (minutes < 0) return `há ${amount} min`;
+    if (minutes > 0) return `em ${amount} min`;
+    return "agora";
+  }
+  function macroRiskPill(d, compact) {
+    const level = macroRiskLevel(d);
+    const labels = compact
+      ? { high: "ALTO", medium: "MÉDIO", none: "—" }
+      : { high: "ALTO", medium: "MÉDIO", none: "SEM RISCO" };
+    if (compact && level === "none") {
+      return '<span style="color:var(--muted);font-size:10px;">—</span>';
+    }
+    const details = [
+      d?.macro_event_title,
+      d?.macro_event_currency,
+      d?.macro_minutes_distance != null ? macroDistance(d.macro_minutes_distance) : "",
+    ].filter(Boolean).join(" · ");
+    return `<span class="pill macro-${level}"${details ? ` title="${esc(details)}"` : ""}>${labels[level]}</span>`;
+  }
 
   /* ── CALENDÁRIO ── */
   function _evMs(ev) {
     if (!ev.date || !ev.time || /all\s*day|tent/i.test(ev.time)) return null;
     return new Date(`${ev.date}T${ev.time}:00Z`).getTime();
+  }
+
+  function _evTimePt(ev) {
+    if (!ev.date || !ev.time || /all\s*day|tent/i.test(ev.time)) return ev.time || "—";
+    return new Date(`${ev.date}T${ev.time}:00Z`).toLocaleTimeString("pt-PT", {
+      timeZone: "Europe/Lisbon", hour: "2-digit", minute: "2-digit"
+    });
   }
 
   function _isUpcoming(ev) {
@@ -842,7 +880,7 @@
 
       html += `<tr class="${pastCls}${upcomingCls}">
         <td style="width:16px;padding-right:0;"></td>
-        <td style="color:var(--muted);font-variant-numeric:tabular-nums;">${esc(ev.time || "—")}</td>
+        <td style="color:var(--muted);font-variant-numeric:tabular-nums;">${_evTimePt(ev)}</td>
         <td><span class="cal-cur">${esc(ev.currency)}</span></td>
         <td>${_calDot(ev.impact)}</td>
         <td class="cal-event">${esc(ev.event)}</td>
@@ -860,7 +898,7 @@
     $("cal-table-host").innerHTML = `<table class="dt">
       <thead><tr>
         <th style="width:80px;">Data</th>
-        <th style="width:58px;">Hora</th>
+        <th style="width:58px;">Hora PT</th>
         <th style="width:52px;">Moeda</th>
         <th style="width:80px;">Impacto</th>
         <th>Evento</th>
@@ -1141,7 +1179,10 @@
         (d.pair || "").toLowerCase().includes(q) ||
         (d.blocking_reason || d.block_reason || "").toLowerCase().includes(q) ||
         (d.combined_signal || "").toLowerCase().includes(q) ||
-        (d.ai_signal || "").toLowerCase().includes(q)
+        (d.ai_signal || "").toLowerCase().includes(q) ||
+        (d.macro_risk_level || "").toLowerCase().includes(q) ||
+        (d.macro_event_title || "").toLowerCase().includes(q) ||
+        (d.macro_event_currency || "").toLowerCase().includes(q)
       );
     }
     return r;
@@ -1171,9 +1212,13 @@
         <td>${pill(d.ai_bias||d.ai_signal)} <span style="color:var(--muted);font-size:10px;">${fmtScore(d.ai_score)}</span></td>
         <td>${scorePill(d.multi_timeframe_score??d.technical_score)}</td>
         <td>${pill(d.combined_signal)} <span style="color:var(--muted);font-size:10px;">${fmtScore(d.combined_score)}</span></td>
-        <td>${d.confidence??0}%</td>
+        <td>${d.gating_confidence??d.confidence??0}%</td>
         <td>${ev}${tc}${pb}</td>
         <td class="wrap">${esc(d.trade_allowed ? "" : (d.blocking_reason||d.block_reason||""))}</td>
+        <td>${macroRiskPill(d, true)}</td>
+        <td class="wrap">${esc(d.macro_event_title || "—")}</td>
+        <td>${macroDistance(d.macro_minutes_distance)}</td>
+        <td class="wrap">${esc(d.macro_reason || "—")}</td>
         <td>${fmtN(d.current_price,5)}</td>
         <td><span class="vol-${d.volatility_level||"unknown"}">${fmtN(d.atr_pips,1)}</span></td>
         <td><button class="fp" style="padding:2px 8px;font-size:10px;" data-ri="${ridx}">▶</button></td>
@@ -1183,7 +1228,8 @@
     $("dec-table-host").innerHTML = `<table class="dt"><thead><tr>
       <th>Data UTC</th><th>Par</th><th>IA</th><th>Técnico</th>
       <th>Combinado</th><th>Conf</th><th>Trade</th><th>Motivo</th>
-      <th>Preço</th><th>ATR</th><th></th>
+      <th>Macro Risk</th><th>Macro Event</th><th>Macro Distance</th>
+      <th>Macro Reason</th><th>Preço</th><th>ATR</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table>`;
 
     $$("[data-ri]", $("dec-table-host")).forEach(btn => {
@@ -1772,6 +1818,20 @@
     const gates = d.gate_diagnostics || {};
     const gctx = gates.context || {}, gcfg = gates.config || {};
     const mGate = gctx.market || {}, cdGate = gctx.cooldown || {}, evGate = gctx.event || {};
+    const macroLevel = macroRiskLevel(d);
+    const macroSec = `<div class="modal-section"><h4>Risco Macro</h4>${buildKv([
+      ["Nível", macroRiskPill(d, false)],
+      ["Evento", esc(d.macro_event_title || "—")],
+      ["Moeda", esc(d.macro_event_currency || "—")],
+      ["Hora do evento", d.macro_event_time ? fmtTime(d.macro_event_time) : "—"],
+      ["Distância", macroDistance(d.macro_minutes_distance)],
+      ["Ação", d.macro_block
+        ? '<span class="pill macro-high">BLOQUEADO</span>'
+        : macroLevel === "medium"
+          ? '<span class="pill macro-medium">Confiança reduzida</span>'
+          : "Sem restrição"],
+      ["Razão", esc(d.macro_reason || "—")],
+    ])}</div>`;
     const paper = d.paper_trade;
     const paperSec = paper ? `<div class="modal-section"><h4>Paper Trade #${paper.id}</h4>${buildKv([
       ["Direção", pill(paper.direction)],
@@ -1831,6 +1891,7 @@
         ["Preço", fmtN(d.current_price, 5)],
         ["Evento", d.dangerous_event_nearby ? `<span class="pill event">evento</span> ${esc(d.dangerous_event_reason||"")}` : "não"],
       ])}</div>
+      ${macroSec}
       <div class="modal-section"><h4>Gate Diagnostics</h4>${buildKv([
         ["Mercado", mGate.is_open === false ? '<span class="pill blocked">fechado</span>' : '<span class="pill allowed">aberto</span>'],
         ["Cooldown", cdGate.cooldown_active ? `<span class="pill blocked">${esc(cdGate.reason||"ativo")}</span>` : "inativo"],

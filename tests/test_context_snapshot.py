@@ -59,6 +59,16 @@ GATE_CONTEXT = {
     "cooldown": {"cooldown_active": False},
     "signal_persistence": 2,
     "spread_pips": 0.8,
+    "macro": {
+        "macro_risk_level": "medium",
+        "macro_block": False,
+        "macro_event_title": "CPI",
+        "macro_event_currency": "USD",
+        "macro_event_time": "2026-05-06T19:10:00+00:00",
+        "macro_minutes_distance": 10.0,
+        "macro_reason": "medium_impact_macro_event",
+        "macro_context_snapshot": {"has_confidence_reduction": True},
+    },
 }
 EVENT_RISK = {"dangerous_event_nearby": False, "dangerous_event_reason": ""}
 PERFORMANCE = {"winrate": 50.0, "loss_streak": 1, "net_pips": 12.0}
@@ -110,6 +120,12 @@ class TestBuildMarketSnapshot:
         assert snap["preliminary_recommendation"]["combined_signal"] == "BUY"
         assert snap["preliminary_recommendation"]["gating_mode"] == "score"
         assert snap["preliminary_recommendation"]["hold_off"] is False
+
+    def test_includes_macro_calendar_context(self):
+        snap = self._snapshot()
+        assert snap["macro_calendar"]["risk_level"] == "medium"
+        assert snap["macro_calendar"]["event_title"] == "CPI"
+        assert snap["macro_calendar"]["context_snapshot"]["has_confidence_reduction"] is True
 
     def test_tolerates_missing_pieces(self):
         snap = context_snapshot.build_market_snapshot(

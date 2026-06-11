@@ -70,6 +70,7 @@ def build_market_snapshot(
     market = gate_context.get("market") or {}
     operational = gate_context.get("operational") or {}
     cooldown = gate_context.get("cooldown") or {}
+    macro = gate_context.get("macro") or {}
     config = (trade_decision.get("gate_diagnostics") or {}).get("config") or {}
 
     technical = {
@@ -139,6 +140,16 @@ def build_market_snapshot(
         "pair": pair,
         "technical": technical,
         "fundamental": fundamental,
+        "macro_calendar": {
+            "risk_level": macro.get("macro_risk_level", "none"),
+            "block": bool(macro.get("macro_block")),
+            "event_title": macro.get("macro_event_title"),
+            "event_currency": macro.get("macro_event_currency"),
+            "event_time": macro.get("macro_event_time"),
+            "minutes_distance": macro.get("macro_minutes_distance"),
+            "reason": macro.get("macro_reason"),
+            "context_snapshot": macro.get("macro_context_snapshot") or {},
+        },
         "performance": performance,
         "operational_risk": operational_risk,
         "filters": filters,
