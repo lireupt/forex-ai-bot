@@ -8,7 +8,7 @@ Uso:
     python monitor_trades.py
 
 Configuração (.env):
-    TRADE_MONITOR_INTERVAL_SECONDS=30
+    TRADE_MONITOR_INTERVAL_SECONDS=60
 """
 
 import os
@@ -29,7 +29,7 @@ from modules.realtime_price import get_price as get_current_price
 load_dotenv()
 
 PIP_SIZE = 0.0001
-_DEFAULT_INTERVAL = 30
+_DEFAULT_INTERVAL = 60
 
 
 def _env_int(name, default):
@@ -194,6 +194,12 @@ def run_cycle(conn):
 
     if not open_trades:
         return 0
+
+    symbols = sorted({t["pair"] for t in open_trades})
+    print(f"[MONITOR] Open trades: {len(open_trades)}")
+    print(f"[MONITOR] Unique symbols: {len(symbols)}")
+    print(f"[MONITOR] API requests this cycle: {len(symbols)}")
+    print(f"[MONITOR] Symbols checked: {', '.join(symbols)}")
 
     prices = fetch_prices_for_trades(open_trades)
     closed = 0
