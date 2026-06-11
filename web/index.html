@@ -158,6 +158,11 @@
       background: var(--panel); border: 1px solid var(--border);
       border-radius: var(--r); overflow: hidden; margin-bottom: 20px;
     }
+    .table-scroll {
+      width: 100%; overflow-x: auto; overflow-y: hidden;
+      scrollbar-color: var(--border) var(--panel-2);
+    }
+    .table-scroll .dt { min-width: max-content; }
     .table-toolbar {
       padding: 10px 14px; border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -196,6 +201,12 @@
     .dt tbody tr:last-child td { border-bottom: none; }
     .dt tbody tr:hover { background: rgba(29,34,44,.6); }
     .dt td.wrap { white-space: normal; max-width: 220px; color: var(--muted); font-size: 11px; }
+    .details-btn {
+      padding: 4px 10px; border-radius: 6px; color: var(--accent);
+      border-color: rgba(76,141,255,.35); background: rgba(76,141,255,.08);
+      font-size: 10px; font-weight: 600;
+    }
+    .details-btn:hover { color: var(--text); border-color: var(--accent); }
 
     /* ── PAGINATION ── */
     .pagination {
@@ -502,7 +513,7 @@
           <button class="fp warn" data-f="blocked">Bloqueado</button>
           <input type="text" class="search-box" id="dec-search" placeholder="Pesquisar…">
         </div>
-        <div id="dec-table-host"><div class="empty-state">a carregar…</div></div>
+        <div id="dec-table-host" class="table-scroll"><div class="empty-state">a carregar…</div></div>
         <div class="pagination" id="dec-pages" style="display:none;"></div>
       </div>
     </div>
@@ -1209,6 +1220,7 @@
       return `<tr>
         <td style="color:var(--muted);font-size:11px;">${fmtTime(d.timestamp)}</td>
         <td><b>${esc(d.pair||"—")}</b><span style="color:var(--muted);font-size:10px;margin-left:4px;">${esc(d.timeframe||"")}</span></td>
+        <td><button class="fp details-btn" data-ri="${ridx}">Detalhes</button></td>
         <td>${pill(d.ai_bias||d.ai_signal)} <span style="color:var(--muted);font-size:10px;">${fmtScore(d.ai_score)}</span></td>
         <td>${scorePill(d.multi_timeframe_score??d.technical_score)}</td>
         <td>${pill(d.combined_signal)} <span style="color:var(--muted);font-size:10px;">${fmtScore(d.combined_score)}</span></td>
@@ -1221,15 +1233,14 @@
         <td class="wrap">${esc(d.macro_reason || "—")}</td>
         <td>${fmtN(d.current_price,5)}</td>
         <td><span class="vol-${d.volatility_level||"unknown"}">${fmtN(d.atr_pips,1)}</span></td>
-        <td><button class="fp" style="padding:2px 8px;font-size:10px;" data-ri="${ridx}">▶</button></td>
       </tr>`;
     }).join("");
 
     $("dec-table-host").innerHTML = `<table class="dt"><thead><tr>
-      <th>Data UTC</th><th>Par</th><th>IA</th><th>Técnico</th>
+      <th>Data UTC</th><th>Par</th><th>Detalhes</th><th>IA</th><th>Técnico</th>
       <th>Combinado</th><th>Conf</th><th>Trade</th><th>Motivo</th>
       <th>Macro Risk</th><th>Macro Event</th><th>Macro Distance</th>
-      <th>Macro Reason</th><th>Preço</th><th>ATR</th><th></th>
+      <th>Macro Reason</th><th>Preço</th><th>ATR</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
 
     $$("[data-ri]", $("dec-table-host")).forEach(btn => {

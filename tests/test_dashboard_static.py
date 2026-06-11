@@ -22,3 +22,10 @@ def test_dashboard_renders_macro_fields_in_table_and_modal():
     assert "<th>Macro Reason</th>" in html
     assert "<h4>Risco Macro</h4>" in html
     assert 'd.macro_event_time ? fmtTime(d.macro_event_time)' in html
+
+
+def test_decision_details_button_stays_near_pair_with_horizontal_scroll():
+    html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    assert 'id="dec-table-host" class="table-scroll"' in html
+    assert '<th>Data UTC</th><th>Par</th><th>Detalhes</th>' in html
+    assert 'class="fp details-btn" data-ri="${ridx}">Detalhes</button>' in html
