@@ -27,6 +27,7 @@ DEFAULT_OUT = ROOT / "web" / "data.json"
 DEFAULT_LIMIT = 50
 
 from modules import database  # noqa: E402
+from modules import ff_calendar as _ff_calendar  # noqa: E402
 
 
 def _volatility_level(atr_pips):
@@ -695,6 +696,28 @@ def _read_latest_weekly_market_prep(pair="EUR/USD"):
         return None
 
 
+def _fetch_calendar_events() -> dict:
+    """Fetch ForexFactory calendar for the current week. Never raises."""
+    try:
+        events, cached, stale, error = _ff_calendar.fetch_this_week()
+        result = {
+            "events": events,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "cached": cached,
+            "error": error,
+        }
+        if stale:
+            result["stale"] = True
+        return result
+    except Exception as exc:
+        return {
+            "events": [],
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "cached": False,
+            "error": str(exc),
+        }
+
+
 def _read_rolling_market_context(pair="EUR/USD", recent_limit=24):
     """Lê o latest e os recentes rolling market context da DB."""
     if not DB_PATH.exists():
@@ -735,6 +758,8 @@ def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
         _read_rolling_market_context() if source == "sqlite" else {"latest": None, "recent": []}
     )
 
+    calendar = _fetch_calendar_events()
+
     payload = {
         "summary": summary,
         "decisions": items,
@@ -748,6 +773,7 @@ def export(out_path=DEFAULT_OUT, limit=DEFAULT_LIMIT):
             "latest": latest_weekly_market_prep,
         },
         "rolling_market_context": rolling_market_context,
+        "calendar": calendar,
     }
 
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")

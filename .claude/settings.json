@@ -13,7 +13,10 @@
       "Bash(venv/bin/python -m pytest --tb=short)",
       "Bash(venv/bin/python -m py_compile main.py modules/scoring.py modules/database.py modules/ai_analyst.py modules/technical.py scripts/export_logs.py scripts/evaluate_paper_trades.py backtest.py)",
       "Bash(venv/bin/pip freeze *)",
-      "Bash(venv/bin/python -m pytest tests/test_check_gates.py -v)"
+      "Bash(venv/bin/python -m pytest tests/test_check_gates.py -v)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('fetched_at:', d.get\\('fetched_at'\\), '| events:', len\\(d.get\\('events',[]\\)\\), '| has last_failed_at:', 'last_failed_at' in d\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 scripts/export_logs.py)"
     ]
   }
 }

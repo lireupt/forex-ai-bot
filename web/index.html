@@ -326,6 +326,73 @@
       .app-meta span:nth-child(n+3) { display: none; }
     }
 
+    /* ── CALENDÁRIO FF ── */
+    .cal-impact {
+      display: inline-flex; align-items: center; gap: 5px;
+    }
+    .cal-dot {
+      display: inline-block; width: 10px; height: 10px;
+      border-radius: 50%; flex-shrink: 0;
+    }
+    .cal-dot-high   { background: #e05252; box-shadow: 0 0 5px rgba(224,82,82,.6); }
+    .cal-dot-medium { background: #e0943a; box-shadow: 0 0 4px rgba(224,148,58,.5); }
+    .cal-dot-low    { background: #c8b820; }
+    .cal-dot-none   { background: #454560; }
+    .cal-cur {
+      display: inline-block; background: var(--panel-2);
+      border: 1px solid var(--border); border-radius: 3px;
+      padding: 1px 5px; font-size: 10px; font-weight: 700;
+      color: var(--text); letter-spacing: .3px;
+    }
+    .cal-actual   { color: #4cca6a; font-weight: 600; }
+    .cal-forecast { color: var(--muted); }
+    .cal-previous { color: var(--muted); }
+    .cal-dash     { color: #333355; }
+    .cal-date-sep td {
+      background: #0d0d1e;
+      color: var(--muted); font-size: 11px; font-weight: 600;
+      padding: 5px 12px !important;
+      border-bottom: 1px solid var(--accent) !important;
+      letter-spacing: .3px;
+    }
+    .cal-upcoming td { background: rgba(200,170,10,.06) !important; }
+    .cal-upcoming .cal-event { color: #e8d840; font-weight: 600; }
+    .cal-status {
+      font-size: 11px; color: var(--muted);
+      padding: 4px 0 10px; display: flex; align-items: center; gap: 8px;
+    }
+    .cal-status .sdot {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
+    }
+    .cal-status .sdot.ok    { background: #4caf50; }
+    .cal-status .sdot.stale { background: var(--warn); }
+    .cal-status .sdot.err   { background: var(--sell); }
+    .cal-clock {
+      margin-left: auto;
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: .3px;
+      white-space: nowrap;
+    }
+    .cal-clock .tz-pt  { color: var(--buy); }
+    .cal-clock .tz-sep { color: var(--border); margin: 0 6px; }
+    .cal-clock .tz-utc { color: var(--muted); font-weight: 400; }
+    /* NOW separator */
+    .cal-now-sep td {
+      background: #101c10 !important;
+      border-top: 1px solid #2ec27e !important;
+      border-bottom: 1px solid rgba(46,194,126,.25) !important;
+      padding: 4px 12px !important;
+      color: #2ec27e;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .4px;
+    }
+    /* Past events — slightly dimmed */
+    tr.cal-past td { opacity: .45; }
+
     /* ── NOTÍCIAS IA ── */
     .news-expand-row td {
       background: var(--panel-2); padding: 16px 20px !important;
@@ -383,6 +450,15 @@
         <path d="M4 5h6M4 7.5h6M4 10h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
       </svg>
       Notícias IA
+    </button>
+    <button class="tab-btn" data-tab="calendar">
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+        <rect x="1" y="2" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M1 5.5h12M4.5 1v3M9.5 1v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        <rect x="4" y="8" width="2" height="2" rx=".4" fill="currentColor"/>
+        <rect x="8" y="8" width="2" height="2" rx=".4" fill="currentColor"/>
+      </svg>
+      Calendário
     </button>
     <button class="tab-btn" data-tab="export">
       <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
@@ -488,6 +564,44 @@
     </div>
   </section>
 
+  <!-- PAGE: CALENDÁRIO -->
+  <section class="page" id="page-calendar">
+    <div class="table-panel">
+      <div class="table-toolbar" id="cal-toolbar" style="gap:5px;flex-wrap:wrap;">
+        <!-- Period -->
+        <button class="fp active" data-cp="week">Esta Semana</button>
+        <button class="fp" data-cp="today">Hoje</button>
+        <div class="toolbar-sep"></div>
+        <!-- Currency -->
+        <button class="fp active" data-cc="ALL">Todas</button>
+        <button class="fp" data-cc="USD">USD</button>
+        <button class="fp" data-cc="EUR">EUR</button>
+        <button class="fp" data-cc="GBP">GBP</button>
+        <button class="fp" data-cc="JPY">JPY</button>
+        <button class="fp" data-cc="CAD">CAD</button>
+        <button class="fp" data-cc="AUD">AUD</button>
+        <button class="fp" data-cc="CHF">CHF</button>
+        <button class="fp" data-cc="NZD">NZD</button>
+        <div class="toolbar-sep"></div>
+        <!-- Impact -->
+        <button class="fp active" data-ci="ALL">Impacto</button>
+        <button class="fp warn" data-ci="high">Alto</button>
+        <button class="fp" data-ci="medium">Médio</button>
+        <button class="fp" data-ci="low">Baixo</button>
+      </div>
+      <div class="cal-status" id="cal-status" style="padding:4px 14px 6px;">
+        <span class="sdot" id="cal-sdot"></span>
+        <span id="cal-status-text">a carregar…</span>
+        <span class="cal-clock" id="cal-clock">
+          <span class="tz-pt" id="cal-clock-pt">—</span>
+          <span class="tz-sep">·</span>
+          <span class="tz-utc" id="cal-clock-utc">UTC —</span>
+        </span>
+      </div>
+      <div id="cal-table-host"><div class="empty-state">a carregar calendário…</div></div>
+    </div>
+  </section>
+
   <!-- PAGE: EXPORT -->
   <section class="page" id="page-export">
     <p style="color:var(--muted);font-size:12px;margin-bottom:20px;">
@@ -560,6 +674,9 @@
   let _decisions = [];
   let _paperTrades = [];
   let _aggRows = [];
+  let _calEvents = [];
+
+  const calSt = { period: "week", currency: "ALL", impact: "ALL" };
 
   const decSt = { page: 1, filter: "all", search: "" };
   const paperSt = { page: 1, filter: "all" };
@@ -614,6 +731,188 @@
     const pct = Math.min(50, Math.abs(n) * 50);
     const left = n >= 0 ? "50%" : `${50-pct}%`;
     return `<span class="sbar"><span class="f${n<0?" n":""}" style="left:${left};width:${pct}%;"></span></span>${fmtScore(n)}`;
+  }
+
+  /* ── CALENDÁRIO ── */
+  function _evMs(ev) {
+    if (!ev.date || !ev.time || /all\s*day|tent/i.test(ev.time)) return null;
+    return new Date(`${ev.date}T${ev.time}:00Z`).getTime();
+  }
+
+  function _isUpcoming(ev) {
+    const ms = _evMs(ev);
+    if (ms === null) return false;
+    const diff = ms - Date.now();
+    return diff >= 0 && diff <= 3600000;
+  }
+
+  function _calDot(impact) {
+    const map = { high: "high", medium: "medium", low: "low", none: "none" };
+    const k = map[impact] || "none";
+    const label = impact ? impact.charAt(0).toUpperCase() + impact.slice(1) : "—";
+    return `<span class="cal-impact"><span class="cal-dot cal-dot-${k}"></span><span style="font-size:10px;color:var(--muted);">${label}</span></span>`;
+  }
+
+  function _calVal(v, cls) {
+    if (!v || v === "\xa0") return `<span class="cal-dash">—</span>`;
+    return `<span class="${cls}">${esc(v)}</span>`;
+  }
+
+  function _calFmtDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso + "T00:00:00");
+    const days  = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+    const months = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+    return `${days[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]}`;
+  }
+
+  function renderCalendar(calData) {
+    const dot = $("cal-sdot");
+    const txt = $("cal-status-text");
+
+    // Atualiza dados e status só quando chegam dados novos (do load())
+    if (calData) {
+      _calEvents = calData.events || [];
+      const time = calData.fetched_at ? new Date(calData.fetched_at).toLocaleTimeString("pt-PT") : "";
+      if (calData.error && !_calEvents.length) {
+        dot.className = "sdot err";
+        txt.textContent = `Erro ao obter calendário: ${calData.error}`;
+      } else if (calData.stale) {
+        dot.className = "sdot stale";
+        txt.textContent = `Cache expirada — ${_calEvents.length} eventos (${time})`;
+      } else {
+        dot.className = "sdot ok";
+        txt.textContent = `${_calEvents.length} eventos • ${calData.cached ? "cache" : "direto"} • ${time}`;
+      }
+    }
+
+    // Sem dados de todo (nunca carregados)
+    if (!_calEvents.length) {
+      dot.className = "sdot err";
+      txt.textContent = "Sem dados — corre: python scripts/export_logs.py";
+      $("cal-table-host").innerHTML = '<div class="empty-state">Corre <code>python scripts/export_logs.py</code> para carregar o calendário ForexFactory.</div>';
+      return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    let events = _calEvents.slice();
+
+    if (calSt.period === "today") {
+      events = events.filter(e => e.date === today);
+    }
+    if (calSt.currency !== "ALL") {
+      events = events.filter(e => e.currency === calSt.currency);
+    }
+    if (calSt.impact !== "ALL") {
+      events = events.filter(e => e.impact === calSt.impact);
+    }
+
+    if (!events.length) {
+      $("cal-table-host").innerHTML = '<div class="empty-state">Sem eventos para os filtros seleccionados.</div>';
+      return;
+    }
+
+    const nowMs   = Date.now();
+    const nowPt   = new Date().toLocaleTimeString("pt-PT", { timeZone: "Europe/Lisbon", hour: "2-digit", minute: "2-digit" });
+    const nowUtc  = new Date().toLocaleTimeString("pt-PT", { timeZone: "UTC", hour: "2-digit", minute: "2-digit" });
+
+    let html = "";
+    let lastDate  = null;
+    let nowInserted = false;
+
+    for (const ev of events) {
+      const evTime = _evMs(ev);
+      const isFuture = evTime === null || evTime > nowMs;
+
+      // Linha AGORA — inserida antes do primeiro evento futuro
+      if (!nowInserted && isFuture) {
+        nowInserted = true;
+        html += `<tr class="cal-now-sep"><td colspan="8">▶ AGORA &nbsp;${nowPt} PT &nbsp;·&nbsp; ${nowUtc} UTC</td></tr>`;
+      }
+
+      // Separador de data
+      if (ev.date !== lastDate) {
+        lastDate = ev.date;
+        const isToday = ev.date === today;
+        html += `<tr class="cal-date-sep"><td colspan="8">${_calFmtDate(ev.date)}${isToday ? ' <span style="color:var(--accent);font-size:10px;margin-left:6px;">HOJE</span>' : ""}</td></tr>`;
+      }
+
+      const pastCls     = !isFuture ? " cal-past" : "";
+      const upcomingCls = _isUpcoming(ev) ? " cal-upcoming" : "";
+
+      html += `<tr class="${pastCls}${upcomingCls}">
+        <td style="width:16px;padding-right:0;"></td>
+        <td style="color:var(--muted);font-variant-numeric:tabular-nums;">${esc(ev.time || "—")}</td>
+        <td><span class="cal-cur">${esc(ev.currency)}</span></td>
+        <td>${_calDot(ev.impact)}</td>
+        <td class="cal-event">${esc(ev.event)}</td>
+        <td style="text-align:right;">${_calVal(ev.actual,   "cal-actual")}</td>
+        <td style="text-align:right;">${_calVal(ev.forecast, "cal-forecast")}</td>
+        <td style="text-align:right;">${_calVal(ev.previous, "cal-previous")}</td>
+      </tr>`;
+    }
+
+    // Se todos os eventos são passados (fim de semana / fim de semana), insere AGORA no final
+    if (!nowInserted) {
+      html += `<tr class="cal-now-sep"><td colspan="8">▶ AGORA &nbsp;${nowPt} PT &nbsp;·&nbsp; ${nowUtc} UTC</td></tr>`;
+    }
+
+    $("cal-table-host").innerHTML = `<table class="dt">
+      <thead><tr>
+        <th style="width:80px;">Data</th>
+        <th style="width:58px;">Hora</th>
+        <th style="width:52px;">Moeda</th>
+        <th style="width:80px;">Impacto</th>
+        <th>Evento</th>
+        <th style="width:68px;text-align:right;">Real</th>
+        <th style="width:68px;text-align:right;">Previsão</th>
+        <th style="width:68px;text-align:right;">Anterior</th>
+      </tr></thead>
+      <tbody>${html}</tbody>
+    </table>`;
+  }
+
+  function setupCalendar() {
+    $$("[data-cp]", $("cal-toolbar")).forEach(btn => {
+      btn.addEventListener("click", () => {
+        $$("[data-cp]", $("cal-toolbar")).forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        calSt.period = btn.dataset.cp;
+        renderCalendar(null);
+      });
+    });
+    $$("[data-cc]", $("cal-toolbar")).forEach(btn => {
+      btn.addEventListener("click", () => {
+        $$("[data-cc]", $("cal-toolbar")).forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        calSt.currency = btn.dataset.cc;
+        renderCalendar(null);
+      });
+    });
+    $$("[data-ci]", $("cal-toolbar")).forEach(btn => {
+      btn.addEventListener("click", () => {
+        $$("[data-ci]", $("cal-toolbar")).forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        calSt.impact = btn.dataset.ci;
+        renderCalendar(null);
+      });
+    });
+
+    // Relógio PT — atualiza a cada segundo
+    function _tickClock() {
+      const now = new Date();
+      const pt  = now.toLocaleTimeString("pt-PT", { timeZone: "Europe/Lisbon", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const utc = now.toLocaleTimeString("pt-PT", { timeZone: "UTC",           hour: "2-digit", minute: "2-digit" });
+      const elPt  = $("cal-clock-pt");
+      const elUtc = $("cal-clock-utc");
+      if (elPt)  elPt.textContent  = `PT ${pt}`;
+      if (elUtc) elUtc.textContent = `UTC ${utc}`;
+    }
+    _tickClock();
+    setInterval(_tickClock, 1000);
+
+    // Re-render do calendário a cada minuto para mover a linha AGORA
+    setInterval(() => { if (_calEvents.length) renderCalendar(null); }, 60000);
   }
 
   /* ── TABS ── */
@@ -1574,6 +1873,7 @@
       renderNewsKpi();
       renderNewsCharts();
       renderNewsTable();
+      renderCalendar(data.calendar || null);
     } catch (err) {
       const b = $("error-banner");
       b.textContent = "Falha ao carregar data.json — corre `python scripts/export_logs.py` (" + err.message + ")";
@@ -1583,6 +1883,7 @@
 
   setupFilters();
   setupExport();
+  setupCalendar();
   load();
   setInterval(load, REFRESH_MS);
 })();

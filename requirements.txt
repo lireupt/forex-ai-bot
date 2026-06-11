@@ -6,3 +6,7 @@ feedparser
 python-dotenv
 yfinance
 pandas-ta
+# ff_calendar
+fastapi
+uvicorn[standard]
+lxml
