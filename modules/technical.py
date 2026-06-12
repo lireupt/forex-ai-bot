@@ -69,6 +69,13 @@ def _env_str(name, default):
     return value.strip()
 
 
+def _env_bool(name, default):
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _vote_value(vote):
     return {"bullish": 1.0, "bearish": -1.0}.get(vote, 0.0)
 
@@ -243,6 +250,20 @@ def analyse(candles_df, pair="EUR/USD", timeframe_role=None):
         else:
             signal = _score_signal(score)
 
+        # ADX trend filter: H1 em lateral (ADX fraco) → NEUTRAL para evitar whipsaws.
+        adx_filter_reason = ""
+        if (
+            role == "h1"
+            and _env_bool("ADX_TREND_FILTER_ENABLED", False)
+            and adx_vote == "weak"
+            and signal != "NEUTRAL"
+        ):
+            adx_filter_reason = (
+                f" [ADX_TREND_FILTER: ADX={adx14:.1f} < {_env_float('MIN_ADX', 20.0):.0f}"
+                " → mercado lateral, sinal suprimido → NEUTRAL]"
+            )
+            signal = "NEUTRAL"
+
         majority_votes = max(bullish_votes, bearish_votes, neutral_votes)
         confidence = round((majority_votes / 3) * 100)
         shadow_signal, shadow_confidence, shadow_reason = _shadow_signal(votes)
@@ -257,7 +278,7 @@ def analyse(candles_df, pair="EUR/USD", timeframe_role=None):
             f"MACD {macd_signal}; estrutura {structure}. "
             f"Score técnico ponderado={score:+.2f} "
             f"(RSI={weights['rsi']:.2f}, EMA={weights['ema']:.2f}, MACD={weights['macd']:.2f}); "
-            f"sinal técnico é {signal}."
+            f"sinal técnico é {signal}.{adx_filter_reason}"
         )
 
         return {
