@@ -273,6 +273,13 @@ def _call_groq(prompt):
         temperature=0.3,
         max_tokens=1500,
     )
+    if response.usage:
+        u = response.usage
+        print(
+            f"[ai-tokens] module=rolling_context provider=groq "
+            f"prompt={u.prompt_tokens} completion={u.completion_tokens} "
+            f"total={u.total_tokens}"
+        )
     return (response.choices[0].message.content or "").strip()
 
 
@@ -285,6 +292,13 @@ def _call_claude(prompt):
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
     )
+    if message.usage:
+        u = message.usage
+        print(
+            f"[ai-tokens] module=rolling_context provider=claude "
+            f"prompt={u.input_tokens} completion={u.output_tokens} "
+            f"total={u.input_tokens + u.output_tokens}"
+        )
     content = message.content[0].text if message.content else ""
     return content.strip()
 

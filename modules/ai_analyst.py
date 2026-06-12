@@ -41,8 +41,9 @@ REGRAS OBRIGATÓRIAS:
 def _format_news(news):
     if not news:
         return "(sem notícias relevantes)"
+    # Últimas 5 notícias (lista ordenada por id ASC → tail = mais recentes)
     lines = []
-    for i, art in enumerate(news[:15], 1):
+    for i, art in enumerate(news[-5:], 1):
         title = art.get("title", "").strip()
         source = art.get("source", "")
         lines.append(f"{i}. [{source}] {title}")
@@ -51,19 +52,27 @@ def _format_news(news):
 
 def _format_events(events):
     if not events:
-        return "(sem eventos de alto impacto)"
+        return "(sem eventos de alto/médio impacto)"
+    # Apenas high/medium impact, máx 10 eventos
+    relevant = [
+        e for e in events
+        if (e.get("impact") or "").lower() in ("high", "medium")
+    ]
+    if not relevant:
+        return "(sem eventos de alto/médio impacto)"
     lines = []
-    for ev in events[:20]:
+    for ev in relevant[:10]:
         time = ev.get("time", "")
         currency = ev.get("currency", "")
         event = ev.get("event", "")
+        impact = ev.get("impact", "")
         extras = []
         for key in ("previous", "forecast", "actual"):
             val = ev.get(key)
             if val:
                 extras.append(f"{key}: {val}")
         suffix = f" ({', '.join(extras)})" if extras else ""
-        lines.append(f"- {time} {currency} {event}{suffix}".strip())
+        lines.append(f"- [{impact}] {time} {currency} {event}{suffix}".strip())
     return "\n".join(lines)
 
 
@@ -100,7 +109,7 @@ def _format_technical(technical):
 def _format_macro_snapshot(snapshot):
     if not snapshot:
         return "(sem snapshot macro disponível)"
-    return json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True)
+    return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def _build_user_message(news, events, pair, technical=None, macro_context_snapshot=None):
@@ -253,6 +262,13 @@ def _analyse_groq(user_message):
         response_format={"type": "json_object"},
         max_tokens=1024,
     )
+    if response.usage:
+        u = response.usage
+        print(
+            f"[ai-tokens] module=ai_analyst provider=groq "
+            f"prompt={u.prompt_tokens} completion={u.completion_tokens} "
+            f"total={u.total_tokens}"
+        )
     return response.choices[0].message.content
 
 
@@ -270,6 +286,13 @@ def _analyse_claude(user_message):
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}],
     )
+    if response.usage:
+        u = response.usage
+        print(
+            f"[ai-tokens] module=ai_analyst provider=claude "
+            f"prompt={u.input_tokens} completion={u.output_tokens} "
+            f"total={u.input_tokens + u.output_tokens}"
+        )
     text = ""
     for block in response.content:
         if block.type == "text":

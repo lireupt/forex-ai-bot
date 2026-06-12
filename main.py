@@ -1441,6 +1441,50 @@ def _run_aggregator_shadow(
         return None, None
 
 
+def _should_update_rolling_context(conn):
+    """Decide se o rolling context deve ser actualizado neste ciclo.
+
+    Regras (avaliadas por ordem):
+    1. Sem contexto anterior → actualizar sempre (primeiro arranque).
+    2. Menos de ROLLING_CONTEXT_MIN_INTERVAL_HOURS desde a última update
+       e não é abertura de sessão London (07:xx) ou NY (13:xx) → ignorar.
+    3. Intervalo mínimo atingido → actualizar.
+    """
+    from datetime import datetime, timezone
+
+    min_hours = _env_int("ROLLING_CONTEXT_MIN_INTERVAL_HOURS", 4)
+    now_utc = datetime.now(timezone.utc)
+
+    try:
+        latest = database.get_latest_rolling_market_context(conn, PAIR)
+    except Exception:
+        return True
+
+    if not latest:
+        return True
+
+    try:
+        raw_ts = latest.get("created_at", "")
+        last_dt = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+        elapsed_h = (now_utc - last_dt).total_seconds() / 3600
+    except Exception:
+        return True
+
+    if elapsed_h >= min_hours:
+        return True
+
+    # Gatilho de abertura de sessão (London 07:00 ou NY 13:00, janela de 30 min)
+    h, m = now_utc.hour, now_utc.minute
+    if (h == 7 and m <= 30) or (h == 13 and m <= 30):
+        return True
+
+    print(
+        f"[rolling-context] sem gatilho — última update há {elapsed_h:.1f}h "
+        f"(mínimo {min_hours}h) — ciclo ignorado"
+    )
+    return False
+
+
 def _run_rolling_context(
     conn,
     technical_result,
@@ -1462,7 +1506,8 @@ def _run_rolling_context(
     if not _env_bool("ROLLING_CONTEXT_ENABLED", False):
         return None
     if not _env_bool("ROLLING_CONTEXT_UPDATE_EVERY_CYCLE", True):
-        return None
+        if not _should_update_rolling_context(conn):
+            return None
     try:
         performance = context_snapshot.build_performance_snapshot(
             conn, PAIR, recent_performance=risk_performance

@@ -16,7 +16,11 @@
       "Bash(venv/bin/python -m pytest tests/test_check_gates.py -v)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('fetched_at:', d.get\\('fetched_at'\\), '| events:', len\\(d.get\\('events',[]\\)\\), '| has last_failed_at:', 'last_failed_at' in d\\)\")",
       "Bash(python3 -c ' *)",
-      "Bash(python3 scripts/export_logs.py)"
+      "Bash(python3 scripts/export_logs.py)",
+      "Bash(grep -r \"groq\\\\|Groq\\\\|GROQ\" /home/lireupt/Projects/forex-ai-bot --include=\"*.py\" ! -path \"*/venv/*\")",
+      "Bash(grep -r \"ai_context\\\\|rolling_context\\\\|prompt\\\\|analyze\\\\|generate\" /home/lireupt/Projects/forex-ai-bot --include=\"*.py\" ! -path \"*/venv/*\")",
+      "Bash(python3)",
+      "Bash(python -c ' *)"
     ]
   }
 }
