@@ -369,6 +369,10 @@ def _ensure_decisions_columns(conn):
         "macro_minutes_distance": "REAL",
         "macro_reason": "TEXT",
         "macro_context_snapshot_json": "TEXT",
+        # Camada de scoring de notícias fundamentado
+        "news_score": "REAL",
+        "news_score_basis": "TEXT",
+        "num_articles": "INTEGER",
     }
     for name, column_type in columns.items():
         if name not in existing:
@@ -890,6 +894,33 @@ def update_decision_aggregator(conn, decision_id, result):
             _json(result.get("warnings")),
             result.get("status", "ok"),
             result.get("model_version"),
+            decision_id,
+        ),
+    )
+    conn.commit()
+    return True
+
+
+def update_decision_news_score(conn, decision_id, news_score_value, news_score_basis, num_articles):
+    """Grava o score de notícias numa decisão já persistida (non-fatal, não bloqueia).
+
+    Update dedicado para não tocar no INSERT posicional de `save_decision`.
+    Segue o mesmo padrão de `update_decision_aggregator`.
+    """
+    if not decision_id:
+        return False
+    conn.execute(
+        """
+        UPDATE decisions
+        SET news_score = ?,
+            news_score_basis = ?,
+            num_articles = ?
+        WHERE id = ?
+        """,
+        (
+            round(float(news_score_value), 4) if news_score_value is not None else None,
+            news_score_basis,
+            int(num_articles) if num_articles is not None else None,
             decision_id,
         ),
     )

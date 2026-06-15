@@ -300,6 +300,9 @@ def _normalise(row, paper_trade_lookup=None):
         "macro_context_snapshot": _parse_json_obj(
             row.get("macro_context_snapshot_json") or row.get("macro_context_snapshot")
         ),
+        "news_score": _coerce_float(row.get("news_score")),
+        "news_score_basis": row.get("news_score_basis") or "",
+        "num_articles": row.get("num_articles"),
     }
 
 
@@ -493,6 +496,8 @@ def _read_from_sqlite(limit):
                 "macro_reason", "macro_context_snapshot_json",
             ):
                 cols_expr[_macro_col] = _macro_col if _macro_col in cols else f"NULL AS {_macro_col}"
+            for _news_col in ("news_score", "news_score_basis", "num_articles"):
+                cols_expr[_news_col] = _news_col if _news_col in cols else f"NULL AS {_news_col}"
             rows = conn.execute(
                 f"""
                 SELECT timestamp, pair, timeframe, ai_signal, technical_signal,
@@ -547,7 +552,10 @@ def _read_from_sqlite(limit):
                        {cols_expr['macro_event_time']},
                        {cols_expr['macro_minutes_distance']},
                        {cols_expr['macro_reason']},
-                       {cols_expr['macro_context_snapshot_json']}
+                       {cols_expr['macro_context_snapshot_json']},
+                       {cols_expr['news_score']},
+                       {cols_expr['news_score_basis']},
+                       {cols_expr['num_articles']}
                 FROM decisions
                 ORDER BY id DESC
                 LIMIT ?

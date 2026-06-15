@@ -140,30 +140,51 @@ class TestCombineScores:
         assert result == pytest.approx(0.5)
 
 
-class TestNewsSentimentScore:
-    """Bug 3: news_sentiment_score deve mapear sentimento para [-1, 1]."""
+class TestNewsScore:
+    """Bug 3: news_score(ai_result, news_items) deve produzir score fundamentado em [-1, 1]."""
 
-    def test_positive_returns_positive_score(self):
-        assert scoring.news_sentiment_score("positive") == pytest.approx(0.40)
+    def _ai(self, bias="BUY", sentiment="positive", adj=0.20):
+        return {"bias": bias, "news_sentiment": sentiment, "confidence_adjustment": adj}
 
-    def test_negative_returns_negative_score(self):
-        assert scoring.news_sentiment_score("negative") == pytest.approx(-0.40)
+    def test_no_news_returns_zero_with_no_news_basis(self):
+        score, basis = scoring.news_score(self._ai(), [])
+        assert score == 0.0
+        assert basis == "no_news"
 
-    def test_neutral_returns_zero(self):
-        assert scoring.news_sentiment_score("neutral") == 0.0
+    def test_empty_ai_result_returns_zero(self):
+        score, basis = scoring.news_score({}, ["artigo"])
+        assert score == 0.0
 
-    def test_mixed_returns_zero(self):
-        assert scoring.news_sentiment_score("mixed") == 0.0
+    def test_positive_sentiment_buy_bias_reinforces(self):
+        # base=0.5, direction=1.0, adj=0.20 → 0.5 + 0.20 = 0.70
+        score, basis = scoring.news_score(self._ai("BUY", "positive", 0.20), ["a"])
+        assert score == pytest.approx(0.70)
+        assert "positive" in basis
+        assert "BUY" in basis
 
-    def test_none_returns_zero(self):
-        assert scoring.news_sentiment_score(None) == 0.0
+    def test_negative_sentiment_sell_bias_reinforces(self):
+        # base=-0.5, direction=-1.0, adj=0.20 → -0.5 + (-1.0)*0.20 = -0.70
+        score, basis = scoring.news_score(self._ai("SELL", "negative", 0.20), ["a"])
+        assert score == pytest.approx(-0.70)
 
-    def test_unknown_returns_zero(self):
-        assert scoring.news_sentiment_score("unknown_value") == 0.0
+    def test_neutral_sentiment_neutral_bias_is_zero(self):
+        score, basis = scoring.news_score(self._ai("NEUTRAL", "neutral", 0.0), ["a"])
+        assert score == pytest.approx(0.0)
 
-    def test_case_insensitive(self):
-        assert scoring.news_sentiment_score("POSITIVE") == pytest.approx(0.40)
-        assert scoring.news_sentiment_score("Negative") == pytest.approx(-0.40)
+    def test_contradictory_sentiment_reduces_magnitude(self):
+        # sentimento positivo mas bias SELL: base=0.5, direction=-1.0, adj=0.20 → 0.30
+        score, basis = scoring.news_score(self._ai("SELL", "positive", 0.20), ["a"])
+        assert score == pytest.approx(0.30)
+
+    def test_score_clamped_to_one(self):
+        # base=0.5, direction=1.0, adj=0.50 → 1.0 (clamped)
+        score, _ = scoring.news_score(self._ai("BUY", "positive", 0.50), ["a"])
+        assert score <= 1.0
+        assert score == pytest.approx(1.0)
+
+    def test_basis_includes_article_count(self):
+        _, basis = scoring.news_score(self._ai(), ["a", "b", "c"])
+        assert "n_articles=3" in basis
 
 
 class TestCombineScoresThreeComponents:

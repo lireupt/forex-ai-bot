@@ -240,3 +240,22 @@ FORCE_REFRESH=True venv/bin/python main.py
 5. **Quando activar a Camada 4 (IA Agregadora)?** Só faz sentido quando houver pelo menos 20-30 decisões para o snapshot de performance ser significativo.
 
 6. **Risk/Reward de 1:2 (ATR×1.5 / ATR×3.0) é adequado para EUR/USD 1h?** Depende do win-rate alcançado. Com win-rate de 40% e RR de 1:2 já é positivo (expectancy > 0).
+
+
+---
+
+## CHANGELOG
+
+### 2026-06-15 — Fim do baseline técnico-exclusivo
+
+**Commit:** a implementar (sessão actual)
+
+**O que mudou:**
+- **Bug 1 (ai_analyst.py):** `confidence` normalizado para escala 0–100 (divisão por 0.25). Antes, `confidence_adjustment=0.25` dava `confidence=25`, sempre abaixo de `AI_VOTE_MIN_CONFIDENCE=35` → IA abstinha-se em 100% dos ciclos.
+- **Bug 2 (scoring.py):** `combine_scores` usa por defeito `load_combined_scoring_config()` (pesos reais AI=0.30/tech=0.55/news=0.15) em vez da config legada (AI=0.60/tech=0.40/news=0.0).
+- **Bug 3 (scoring.py + main.py):** substituída `news_sentiment_score(sentiment)` pela função `news_score(ai_result, news_items) → (float, str)`, que fundamenta o score de notícias no `bias`, `news_sentiment` e `confidence_adjustment` da IA, ancorado na contagem de artigos. Inspirado em TradingAgents (arXiv:2412.20138).
+- **Bug 4 (scoring.py):** `load_combined_scoring_config()` lê `COMBINED_BUY_THRESHOLD` / `COMBINED_SELL_THRESHOLD` (default 0.35) em vez do `SCORE_BUY_THRESHOLD` legado.
+- **DB schema:** colunas `news_score`, `news_score_basis`, `num_articles` adicionadas à tabela `decisions` (schema aditivo, não destrutivo).
+- **export_logs.py:** as 3 novas colunas incluídas no `data.json` exportado ao dashboard.
+
+**A partir desta versão:** todos os 3 componentes (IA, técnica, notícias) participam efectivamente no `combined_score`. As decisões anteriores a esta data correspondem ao baseline onde `combined_score ≡ technical_score`.

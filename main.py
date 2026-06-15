@@ -487,11 +487,6 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
     abstains = _ai_abstains(ai_result)
     ai_score_for_combine = None if abstains else ai_score
 
-    # Computar news_score a partir do sentimento da IA se o caller não forneceu
-    # um valor não-nulo. "mixed"/"neutral" → 0.0 → será excluído pelo `or None`.
-    if news_score == 0.0:
-        news_score = scoring.news_sentiment_score(ai_result.get("news_sentiment"))
-
     technical_score = indicators.get("technical_score")
     if technical_score is None:
         technical_score = scoring.technical_votes_score(
@@ -564,7 +559,6 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
         "confidence_adjustment": confidence_adjustment,
         "confidence_adjustment_reasons": confidence_reasons,
         "ai_vote_status": ai_vote_status,
-        "news_score_computed": round(float(news_score or 0.0), 4),
         "effective_weights": effective_weights,
     }
 
@@ -1177,7 +1171,6 @@ def _build_decision_entry(
         # Auditoria do pipeline de scoring: permite recalcular combined_score a
         # partir do log sem reverse-engineering.
         "ai_vote_status": combined.get("ai_vote_status", ""),
-        "news_score_computed": combined.get("news_score_computed", 0.0),
         "effective_weights": combined.get("effective_weights", {}),
     }
 
@@ -1802,7 +1795,12 @@ def main():
 
     print()
     scoring_config = scoring.load_combined_scoring_config()
-    combined = _combine_signals(ai_result, technical_result, scoring_config=scoring_config)
+    news_score_value, news_score_basis = scoring.news_score(ai_result, relevant_news)
+    combined = _combine_signals(
+        ai_result, technical_result,
+        scoring_config=scoring_config,
+        news_score=news_score_value,
+    )
     shadow_combined = _shadow_combine(ai_result, technical_result)
     current_price = technical_result.get("indicators", {}).get("current_price")
     atr_pips = technical_result.get("indicators", {}).get("atr_pips")
@@ -1824,7 +1822,6 @@ def main():
         technical_result.get("shadow_technical_confidence"),
     )
     ai_voted = not _ai_abstains(ai_result)
-    news_score_value = scoring.news_sentiment_score(ai_result.get("news_sentiment"))
     combined_score_value = scoring.combine_scores(
         ai_score_value if ai_voted else None, technical_score_value,
         shadow_score=shadow_score_value,
@@ -2054,6 +2051,9 @@ def main():
         operational_state=op_state,
     )
     decision_entry["is_duplicate"] = is_duplicate
+    decision_entry["news_score"] = news_score_value
+    decision_entry["news_score_basis"] = news_score_basis
+    decision_entry["num_articles"] = len(relevant_news)
     if aggregator_result is not None:
         decision_entry["ai_aggregated"] = aggregator_result
 
@@ -2074,6 +2074,14 @@ def main():
             database.update_decision_aggregator(conn, decision_id, aggregator_result)
         except Exception as e:
             print(f"[aggregator] gravação shadow falhou (não-fatal): {type(e).__name__}: {e}")
+    if decision_id is not None:
+        try:
+            database.update_decision_news_score(
+                conn, decision_id,
+                news_score_value, news_score_basis, len(relevant_news),
+            )
+        except Exception as e:
+            print(f"[news-score] gravação falhou (não-fatal): {type(e).__name__}: {e}")
     paper_trade_id = _maybe_create_paper_trade(
         conn,
         decision_id=decision_id,

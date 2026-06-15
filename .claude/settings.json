@@ -25,7 +25,9 @@
       "Bash(venv/bin/python -m pytest tests/test_scoring.py tests/test_ai_analyst.py tests/test_multi_timeframe.py -v)",
       "Bash(git stash *)",
       "Bash(venv/bin/python -m pytest tests/test_ai_analyst.py::TestBuildAnalysisInput::test_includes_macro_context_snapshot -v)",
-      "Bash(venv/bin/python -m pytest -q)"
+      "Bash(venv/bin/python -m pytest -q)",
+      "Bash(python -m pytest tests/ -x -q)",
+      "Bash(python -m pytest tests/ -q)"
     ]
   }
 }

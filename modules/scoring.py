@@ -185,23 +185,45 @@ def combine_scores(ai_score, technical_score, shadow_score=None, news_score=None
     return _clamp(round(weighted_sum / total_weight, 4))
 
 
-def news_sentiment_score(news_sentiment):
-    """Converte news_sentiment da IA em score [-1, 1] para o par em análise.
+_SENTIMENT_BASE = {"positive": 0.5, "negative": -0.5, "mixed": 0.0, "neutral": 0.0}
+_BIAS_DIRECTION = {"BUY": 1.0, "SELL": -1.0, "NEUTRAL": 0.0}
 
-    A IA contextualiza o sentimento para o par específico (ex.: EUR/USD), logo
-    "positive" = bullish EUR e "negative" = bearish EUR. "mixed" e "neutral"
-    devolvem 0.0 — serão excluídos do denominador pelo caller (0.0 or None).
 
-    Magnitudes moderadas (±0.40) reflectem que o sentimento das notícias é um
-    sinal auxiliar, não determinístico como a análise técnica.
+def news_score(ai_result, news_items):
+    """Score de notícias fundamentado em [-1, 1], calculado a partir dos outputs
+    já normalizados da IA (bias, news_sentiment, confidence_adjustment).
+
+    Inspirado no padrão "Grounded Sentiment Analyst" (TradingAgents, arXiv:2412.20138):
+    anchoring em dados concretos, sem nova chamada LLM, totalmente auditável.
+
+    Devolve (score, basis):
+    - score: float em [-1, 1], ou 0.0 se não houver notícias ou IA vazia
+    - basis: string de auditoria com os inputs usados no cálculo
+
+    score = base(sentiment) + direction(bias) × |confidence_adjustment|
+    Neutro/mixed → base=0.0; clampado a [-1.0, 1.0].
+    0.0 ≡ sem informação → caller deve passar `news_score or None` ao combine_scores.
     """
-    mapping = {
-        "positive": 0.40,
-        "negative": -0.40,
-        "mixed": 0.0,
-        "neutral": 0.0,
-    }
-    return mapping.get((news_sentiment or "").lower(), 0.0)
+    if not ai_result or not news_items:
+        return 0.0, "no_news"
+
+    sentiment = (ai_result.get("news_sentiment") or "neutral").lower()
+    bias = (ai_result.get("bias") or "NEUTRAL").upper()
+    try:
+        confidence_adjustment = float(ai_result.get("confidence_adjustment") or 0.0)
+    except (TypeError, ValueError):
+        confidence_adjustment = 0.0
+
+    base = _SENTIMENT_BASE.get(sentiment, 0.0)
+    direction = _BIAS_DIRECTION.get(bias, 0.0)
+    score = base + direction * abs(confidence_adjustment)
+    score = round(max(-1.0, min(1.0, score)), 4)
+
+    basis = (
+        f"sentiment={sentiment} bias={bias} "
+        f"adj={confidence_adjustment:+.4f} n_articles={len(news_items)}"
+    )
+    return score, basis
 
 
 def confidence_to_unit(confidence):
