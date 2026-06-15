@@ -20,7 +20,12 @@
       "Bash(grep -r \"groq\\\\|Groq\\\\|GROQ\" /home/lireupt/Projects/forex-ai-bot --include=\"*.py\" ! -path \"*/venv/*\")",
       "Bash(grep -r \"ai_context\\\\|rolling_context\\\\|prompt\\\\|analyze\\\\|generate\" /home/lireupt/Projects/forex-ai-bot --include=\"*.py\" ! -path \"*/venv/*\")",
       "Bash(python3)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(sqlite3 data/forex_bot.db \"SELECT COUNT\\(*\\) FROM decisions; SELECT COUNT\\(*\\) FROM paper_trades; SELECT COUNT\\(*\\) FROM paper_trades WHERE status='win'; SELECT COUNT\\(*\\) FROM paper_trades WHERE status='loss'; SELECT COUNT\\(*\\) FROM paper_trades WHERE status='open';\")",
+      "Bash(venv/bin/python -m pytest tests/test_scoring.py tests/test_ai_analyst.py tests/test_multi_timeframe.py -v)",
+      "Bash(git stash *)",
+      "Bash(venv/bin/python -m pytest tests/test_ai_analyst.py::TestBuildAnalysisInput::test_includes_macro_context_snapshot -v)",
+      "Bash(venv/bin/python -m pytest -q)"
     ]
   }
 }

@@ -481,10 +481,17 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
             "neutral_reason": "decision_skipped_ai_failed",
         }
 
-    scoring_config = scoring_config or scoring.load_scoring_config()
+    scoring_config = scoring_config or scoring.load_combined_scoring_config()
     indicators = technical_result.get("indicators", {})
     ai_score = _ai_context_score(ai_result)
-    ai_score_for_combine = None if _ai_abstains(ai_result) else ai_score
+    abstains = _ai_abstains(ai_result)
+    ai_score_for_combine = None if abstains else ai_score
+
+    # Computar news_score a partir do sentimento da IA se o caller não forneceu
+    # um valor não-nulo. "mixed"/"neutral" → 0.0 → será excluído pelo `or None`.
+    if news_score == 0.0:
+        news_score = scoring.news_sentiment_score(ai_result.get("news_sentiment"))
+
     technical_score = indicators.get("technical_score")
     if technical_score is None:
         technical_score = scoring.technical_votes_score(
@@ -508,6 +515,24 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
         )
     if timeframe_block_reason and signal != "NEUTRAL":
         reasoning = f"{reasoning} [timeframe_block={timeframe_block_reason}]"
+
+    # Log de auditoria: estado do voto da IA e pesos efectivos após renormalização.
+    conf_val = float(ai_result.get("confidence") or 0.0)
+    threshold_val = _env_float("AI_VOTE_MIN_CONFIDENCE", 35.0)
+    if abstains:
+        ai_vote_status = f"abstained:confidence={conf_val:.0f}<threshold={threshold_val:.0f}"
+    else:
+        ai_vote_status = f"included:confidence={conf_val:.0f}:score={ai_score:+.4f}"
+
+    ai_w_eff = scoring_config["ai_weight"] if ai_score_for_combine is not None else 0.0
+    tech_w_eff = scoring_config["technical_weight"]
+    news_w_eff = scoring_config.get("news_weight", 0.0) if news_score else 0.0
+    total_w_eff = ai_w_eff + tech_w_eff + news_w_eff
+    effective_weights = {
+        "ai": round(ai_w_eff / total_w_eff, 4) if total_w_eff > 0 else 0.0,
+        "technical": round(tech_w_eff / total_w_eff, 4) if total_w_eff > 0 else 0.0,
+        "news": round(news_w_eff / total_w_eff, 4) if total_w_eff > 0 else 0.0,
+    }
 
     return {
         "signal": signal,
@@ -538,6 +563,9 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
         "timeframe_block_reason": timeframe_block_reason,
         "confidence_adjustment": confidence_adjustment,
         "confidence_adjustment_reasons": confidence_reasons,
+        "ai_vote_status": ai_vote_status,
+        "news_score_computed": round(float(news_score or 0.0), 4),
+        "effective_weights": effective_weights,
     }
 
 
@@ -1146,6 +1174,11 @@ def _build_decision_entry(
         "operational_mode": (operational_state or {}).get("mode"),
         "operational_can_trade": (operational_state or {}).get("can_open_trade"),
         "operational_block_reason": (operational_state or {}).get("block_reason"),
+        # Auditoria do pipeline de scoring: permite recalcular combined_score a
+        # partir do log sem reverse-engineering.
+        "ai_vote_status": combined.get("ai_vote_status", ""),
+        "news_score_computed": combined.get("news_score_computed", 0.0),
+        "effective_weights": combined.get("effective_weights", {}),
     }
 
 
@@ -1791,10 +1824,11 @@ def main():
         technical_result.get("shadow_technical_confidence"),
     )
     ai_voted = not _ai_abstains(ai_result)
+    news_score_value = scoring.news_sentiment_score(ai_result.get("news_sentiment"))
     combined_score_value = scoring.combine_scores(
         ai_score_value if ai_voted else None, technical_score_value,
         shadow_score=shadow_score_value,
-        news_score=None,
+        news_score=news_score_value or None,
         config=scoring_config,
     )
     score_signal_value = scoring.score_to_signal(combined_score_value, scoring_config)
@@ -1964,6 +1998,7 @@ def main():
         f"ai_score={ai_score_value:+.4f}"
         f"{' (abstém — conf<' + str(int(_env_float('AI_VOTE_MIN_CONFIDENCE', 35.0))) + ')' if not ai_voted else ''} "
         f"tech_score={technical_score_value:+.4f} "
+        f"news_score={news_score_value:+.4f} "
         f"pesos=[AI={_w['ai_weight']:.2f} tech={_w['technical_weight']:.2f} news={_w.get('news_weight', 0.0):.2f}] "
         f"combined={combined_score_value:+.4f} -> {score_signal_value}"
         + (f" neutral_reason={_nr}" if score_signal_value == "NEUTRAL" and _nr else "")

@@ -235,7 +235,13 @@ def _normalise_contextual(result):
 
     # Campos legados preservados para cache, dashboard e testes existentes.
     result.setdefault("signal", bias)
-    result.setdefault("confidence", int(round(abs(result["confidence_adjustment"]) * 100)))
+    # confidence_adjustment está em [-0.25, 0.25]. Normalizar para [0, 100]:
+    # 0.25 → 100, 0.0 → 0. Sem esta divisão fica limitado a 25, sempre abaixo
+    # de AI_VOTE_MIN_CONFIDENCE=35 → IA abstém-se em 100% dos ciclos.
+    result.setdefault(
+        "confidence",
+        int(round(abs(result["confidence_adjustment"]) / 0.25 * 100)),
+    )
     result.setdefault("reasoning", result["reason"])
     result.setdefault("risk_level", "HIGH" if result["risk_adjustment"] < -0.2 else "MEDIUM")
     return result

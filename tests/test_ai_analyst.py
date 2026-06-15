@@ -94,8 +94,9 @@ class TestBuildAnalysisInput:
             macro_context_snapshot=snapshot,
         )
         assert "SNAPSHOT DO FILTRO MACRO" in text
-        assert '"title": "CPI"' in text
-        assert '"has_confidence_reduction": true' in text
+        # _format_macro_snapshot usa separators=(",",":") → JSON compacto sem espaços
+        assert '"title":"CPI"' in text
+        assert '"has_confidence_reduction":true' in text
 
 
 class TestAnalyseFallback:
@@ -130,6 +131,67 @@ class TestAnalyseFallback:
         monkeypatch.setenv("AI_PROVIDER", "groq")
         result = ai_analyst.analyse([], [], "EUR/USD")
         assert result["model_version"] == ai_analyst.model_version_for_provider("groq")
+
+
+class TestNormaliseContextual:
+    """Bug 1: confidence deve estar na escala 0-100, não 0-25."""
+
+    def _make_contextual(self, bias="BUY", confidence_adjustment=0.25, **kwargs):
+        base = {
+            "bias": bias,
+            "confidence_adjustment": confidence_adjustment,
+            "risk_adjustment": 0.0,
+            "macro_context": "bullish_eur",
+            "volatility_context": "medium",
+            "news_sentiment": "positive",
+            "reason": "teste",
+            "hold_off": False,
+        }
+        base.update(kwargs)
+        return ai_analyst._normalise_contextual(base)
+
+    def test_max_adjustment_gives_confidence_100(self):
+        result = self._make_contextual(confidence_adjustment=0.25)
+        assert result["confidence"] == 100
+
+    def test_zero_adjustment_gives_confidence_zero(self):
+        result = self._make_contextual(confidence_adjustment=0.0)
+        assert result["confidence"] == 0
+
+    def test_half_adjustment_gives_confidence_50(self):
+        result = self._make_contextual(confidence_adjustment=0.125)
+        assert result["confidence"] == 50
+
+    def test_negative_adjustment_uses_abs_value(self):
+        # confidence é sempre positivo (magnitude)
+        result = self._make_contextual(confidence_adjustment=-0.25)
+        assert result["confidence"] == 100
+
+    def test_explicit_confidence_not_overwritten(self):
+        # Se a resposta já tiver "confidence", setdefault não a sobrescreve.
+        base = {
+            "bias": "BUY",
+            "confidence_adjustment": 0.25,
+            "risk_adjustment": 0.0,
+            "macro_context": "bullish_eur",
+            "volatility_context": "medium",
+            "news_sentiment": "positive",
+            "reason": "teste",
+            "hold_off": False,
+            "confidence": 77,  # já presente
+        }
+        result = ai_analyst._normalise_contextual(base)
+        assert result["confidence"] == 77
+
+    def test_confidence_above_ai_vote_min_threshold_when_max_adjustment(self):
+        # Após a correcção, adjustment=0.25 → confidence=100 >= AI_VOTE_MIN_CONFIDENCE=35.
+        result = self._make_contextual(confidence_adjustment=0.25)
+        assert result["confidence"] >= 35
+
+    def test_confidence_below_ai_vote_min_threshold_when_weak_adjustment(self):
+        # adjustment=0.08 → confidence=32 < 35 → IA abstém-se correctamente.
+        result = self._make_contextual(confidence_adjustment=0.08)
+        assert result["confidence"] < 35
 
 
 class TestModelVersion:

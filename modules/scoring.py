@@ -52,6 +52,12 @@ def _env_float_any(names, default):
 
 
 def load_scoring_config():
+    """DEPRECATED: config legada (AI=0.6/tech=0.4, news=0.0, threshold=0.35).
+
+    Usada apenas por testes legados e ferramentas antigas. NÃO usar no pipeline
+    principal — usar `load_combined_scoring_config()` que lê as env vars correctas
+    (AI_WEIGHT, TECHNICAL_WEIGHT, NEWS_WEIGHT, COMBINED_BUY/SELL_THRESHOLD).
+    """
     return {
         "buy_threshold": _env_float("SCORE_BUY_THRESHOLD", DEFAULT_BUY_THRESHOLD),
         "sell_threshold": _env_float("SCORE_SELL_THRESHOLD", DEFAULT_SELL_THRESHOLD),
@@ -143,8 +149,17 @@ def score_to_signal(score, config=None):
 
 
 def combine_scores(ai_score, technical_score, shadow_score=None, news_score=None, config=None):
-    """Combina scores num único valor ponderado em [-1, 1]."""
-    config = config or load_scoring_config()
+    """Combina scores num único valor ponderado em [-1, 1].
+
+    Componentes com valor None são excluídos do numerador E do denominador
+    (renormalização proporcional). Componentes com valor 0.0 passados como None
+    pelo caller também são excluídos — é semanticamente correcto: 0.0 = neutral,
+    sem informação nova, não deve dilatar o denominador.
+
+    O default usa `load_combined_scoring_config()` (pesos do pipeline principal:
+    AI=0.30, tech=0.55, news=0.15, threshold=COMBINED_BUY/SELL_THRESHOLD).
+    """
+    config = config or load_combined_scoring_config()
     ai_w = config["ai_weight"]
     tech_w = config["technical_weight"]
     news_w = config.get("news_weight", 0.0)
@@ -168,6 +183,25 @@ def combine_scores(ai_score, technical_score, shadow_score=None, news_score=None
     if total_weight == 0:
         return 0.0
     return _clamp(round(weighted_sum / total_weight, 4))
+
+
+def news_sentiment_score(news_sentiment):
+    """Converte news_sentiment da IA em score [-1, 1] para o par em análise.
+
+    A IA contextualiza o sentimento para o par específico (ex.: EUR/USD), logo
+    "positive" = bullish EUR e "negative" = bearish EUR. "mixed" e "neutral"
+    devolvem 0.0 — serão excluídos do denominador pelo caller (0.0 or None).
+
+    Magnitudes moderadas (±0.40) reflectem que o sentimento das notícias é um
+    sinal auxiliar, não determinístico como a análise técnica.
+    """
+    mapping = {
+        "positive": 0.40,
+        "negative": -0.40,
+        "mixed": 0.0,
+        "neutral": 0.0,
+    }
+    return mapping.get((news_sentiment or "").lower(), 0.0)
 
 
 def confidence_to_unit(confidence):
