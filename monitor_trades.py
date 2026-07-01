@@ -5,12 +5,15 @@ tempo real assim que o preço atual toca no SL ou TP, sem aguardar a
 chegada de novas candles horárias.
 
 Uso:
-    python monitor_trades.py
+    python monitor_trades.py           # daemon contínuo
+    python monitor_trades.py --once    # um ciclo e sai (para cron)
 
 Configuração (.env):
     TRADE_MONITOR_INTERVAL_SECONDS=60
+    MONITOR_WEB_ROOT=/var/www/forex-bot   # opcional: deploy automático
 """
 
+import argparse
 import os
 import sys
 import time
@@ -241,16 +244,65 @@ def run_cycle(conn):
 
 
 # ---------------------------------------------------------------------------
+# Export + deploy helper
+# ---------------------------------------------------------------------------
+
+def _export_and_deploy():
+    """Regenera data.json e copia para WEB_ROOT se configurado."""
+    try:
+        from scripts.export_logs import export as _export
+        _export()
+        print("[MONITOR] data.json atualizado")
+    except Exception as exc:
+        print(f"[MONITOR] Aviso: falha ao exportar data.json: {exc}")
+        return
+
+    web_root = os.getenv("MONITOR_WEB_ROOT", "").strip()
+    if not web_root:
+        return
+    src = ROOT / "web" / "data.json"
+    dst = Path(web_root) / "data.json"
+    try:
+        import shutil
+        shutil.copy2(src, dst)
+        print(f"[MONITOR] data.json implantado em {dst}")
+    except Exception as exc:
+        print(f"[MONITOR] Aviso: falha ao copiar para {dst}: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
 def main():
+    parser = argparse.ArgumentParser(description="Monitor de paper-trades em tempo real.")
+    parser.add_argument(
+        "--once", action="store_true",
+        help="Executa um único ciclo e sai (modo cron).",
+    )
+    args = parser.parse_args()
+
     interval = _env_int("TRADE_MONITOR_INTERVAL_SECONDS", _DEFAULT_INTERVAL)
-    print(f"[MONITOR] Iniciado — intervalo: {interval}s")
 
     conn = database.connect()
     database.init_db(conn)
 
+    if args.once:
+        open_trades = database.get_open_paper_trades(conn)
+        if not open_trades:
+            print("[MONITOR] Sem trades em aberto.")
+            return
+        print(
+            f"[MONITOR] {_utc_now().strftime('%Y-%m-%d %H:%M:%S')} UTC — "
+            f"{len(open_trades)} trade(s) em aberto"
+        )
+        closed = run_cycle(conn)
+        if closed:
+            print(f"[MONITOR] {closed} trade(s) fechada(s) neste ciclo")
+        _export_and_deploy()
+        return
+
+    print(f"[MONITOR] Iniciado — intervalo: {interval}s")
     while True:
         try:
             open_trades = database.get_open_paper_trades(conn)
@@ -266,6 +318,7 @@ def main():
             closed = run_cycle(conn)
             if closed:
                 print(f"[MONITOR] {closed} trade(s) fechada(s) neste ciclo")
+            _export_and_deploy()
 
         except Exception as exc:
             print(f"[MONITOR] Erro inesperado no ciclo: {exc}")
