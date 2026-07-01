@@ -1281,8 +1281,7 @@
   }
 
   function renderPaperTable() {
-    const rev = _paperTrades.slice().reverse();
-    const filtered = filterPaper(rev, paperSt.filter);
+    const filtered = filterPaper(_paperTrades, paperSt.filter);
     const totalPg = Math.max(1, Math.ceil(filtered.length / PG));
     if (paperSt.page > totalPg) paperSt.page = totalPg;
     const pg = filtered.slice((paperSt.page - 1) * PG, paperSt.page * PG);
