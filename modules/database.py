@@ -224,6 +224,60 @@ def init_db(conn):
             should_reduce_risk INTEGER,
             raw_response_json TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS backtest_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT UNIQUE NOT NULL,
+            pair TEXT NOT NULL,
+            date_from TEXT NOT NULL,
+            date_to TEXT NOT NULL,
+            config_json TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            status TEXT NOT NULL DEFAULT 'running',
+            total_candles INTEGER,
+            total_decisions INTEGER,
+            total_trades INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS backtest_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            candle_time TEXT NOT NULL,
+            signal TEXT,
+            confidence INTEGER,
+            combined_score REAL,
+            trade_allowed INTEGER,
+            block_reason TEXT,
+            blocking_reason TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS backtest_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            pair TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            simulated_sl REAL NOT NULL,
+            simulated_tp REAL NOT NULL,
+            sl_pips REAL,
+            tp_pips REAL,
+            atr_pips REAL,
+            created_at TEXT NOT NULL,
+            expiry_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            close_price REAL,
+            closed_at TEXT,
+            close_reason TEXT,
+            result_pips REAL,
+            result_r_multiple REAL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_backtest_decisions_run
+            ON backtest_decisions(run_id);
+        CREATE INDEX IF NOT EXISTS idx_backtest_trades_run
+            ON backtest_trades(run_id);
         """
     )
     _ensure_ai_analysis_columns(conn)
@@ -2071,3 +2125,121 @@ def get_recent_rolling_market_context(conn, pair, limit=24):
     result = [_decode_rolling_context_row(r) for r in rows]
     result.reverse()
     return result
+
+
+# ─── Backtest (tabelas isoladas — nunca tocam em paper_trades/decisions) ────
+
+def create_backtest_run(conn, run_id, pair, date_from, date_to, config):
+    conn.execute(
+        """
+        INSERT INTO backtest_runs
+        (run_id, pair, date_from, date_to, config_json, started_at, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'running')
+        """,
+        (run_id, pair, date_from, date_to, json.dumps(config, default=str), utc_now()),
+    )
+    conn.commit()
+
+
+def finish_backtest_run(conn, run_id, total_candles, total_decisions, total_trades, status="completed"):
+    conn.execute(
+        """
+        UPDATE backtest_runs
+        SET finished_at = ?, status = ?, total_candles = ?, total_decisions = ?, total_trades = ?
+        WHERE run_id = ?
+        """,
+        (utc_now(), status, total_candles, total_decisions, total_trades, run_id),
+    )
+    conn.commit()
+
+
+def get_backtest_run(conn, run_id):
+    row = conn.execute(
+        "SELECT * FROM backtest_runs WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    result = dict(row)
+    result["config"] = json.loads(result["config_json"])
+    return result
+
+
+def save_backtest_decision(conn, run_id, candle_time, decision_fields):
+    conn.execute(
+        """
+        INSERT INTO backtest_decisions
+        (run_id, candle_time, signal, confidence, combined_score,
+         trade_allowed, block_reason, blocking_reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            candle_time,
+            decision_fields.get("signal"),
+            decision_fields.get("confidence"),
+            decision_fields.get("combined_score"),
+            int(bool(decision_fields.get("trade_allowed"))),
+            decision_fields.get("block_reason"),
+            decision_fields.get("blocking_reason"),
+            utc_now(),
+        ),
+    )
+
+
+def save_backtest_trade(conn, run_id, pair, trade):
+    cursor = conn.execute(
+        """
+        INSERT INTO backtest_trades
+        (run_id, pair, direction, entry_price, simulated_sl, simulated_tp,
+         sl_pips, tp_pips, atr_pips, created_at, expiry_at, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+        """,
+        (
+            run_id,
+            pair,
+            trade["direction"],
+            trade["entry_price"],
+            trade["simulated_sl"],
+            trade["simulated_tp"],
+            trade.get("sl_pips"),
+            trade.get("tp_pips"),
+            trade.get("atr_pips"),
+            trade["created_at"],
+            trade["expiry_at"],
+        ),
+    )
+    return cursor.lastrowid
+
+
+def update_backtest_trade_result(conn, trade_id, result):
+    conn.execute(
+        """
+        UPDATE backtest_trades
+        SET status = ?, close_price = ?, closed_at = ?, close_reason = ?,
+            result_pips = ?, result_r_multiple = ?
+        WHERE id = ?
+        """,
+        (
+            result.status,
+            result.close_price,
+            result.closed_at,
+            result.close_reason,
+            result.result_pips,
+            result.result_r_multiple,
+            trade_id,
+        ),
+    )
+
+
+def get_backtest_trades(conn, run_id):
+    rows = conn.execute(
+        "SELECT * FROM backtest_trades WHERE run_id = ? ORDER BY id ASC", (run_id,)
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def get_backtest_decisions(conn, run_id):
+    rows = conn.execute(
+        "SELECT * FROM backtest_decisions WHERE run_id = ? ORDER BY id ASC", (run_id,)
+    ).fetchall()
+    return _rows_to_dicts(rows)

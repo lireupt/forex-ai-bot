@@ -73,7 +73,7 @@ def _pair_currencies(pair):
     return {base, quote}
 
 
-def _parse_dt(value):
+def parse_dt(value):
     if not value:
         return None
     try:
@@ -553,7 +553,7 @@ def _trades_since(trades, direction, cutoff_dt):
     for trade in trades:
         if trade.get("direction") != direction:
             continue
-        created_dt = _parse_dt(trade.get("created_at"))
+        created_dt = parse_dt(trade.get("created_at"))
         if created_dt is None or created_dt < cutoff_dt:
             continue
         result.append(trade)
@@ -590,7 +590,7 @@ def cooldown_state(recent_trades, last_closed_trade, direction, now_dt, config):
         return state
 
     if last_closed_trade and last_closed_trade.get("status") == "loss":
-        closed_dt = _parse_dt(last_closed_trade.get("closed_at"))
+        closed_dt = parse_dt(last_closed_trade.get("closed_at"))
         if closed_dt is not None:
             hours_since_loss = (now_dt - closed_dt).total_seconds() / 3600
             if hours_since_loss < config["after_loss_hours"]:
