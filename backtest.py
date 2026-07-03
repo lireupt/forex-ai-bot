@@ -24,9 +24,10 @@ import pandas as pd
 import yfinance as yf
 
 from modules import database, scoring
+from modules.pair_spec import get_pair_spec
 from modules.technical import analyse as analyse_technical
 
-PIP_SIZE = 0.0001
+PIP_SIZE = get_pair_spec("EUR/USD").pip_size
 WARMUP_BARS = 50  # EMA50 precisa de pelo menos 50 candles
 
 

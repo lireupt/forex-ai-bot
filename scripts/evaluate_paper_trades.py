@@ -21,8 +21,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from modules import database  # noqa: E402
+from modules.pair_spec import get_pair_spec  # noqa: E402
 
-PIP_SIZE = 0.0001
+PIP_SIZE = get_pair_spec("EUR/USD").pip_size
 
 
 def _parse_iso(value):

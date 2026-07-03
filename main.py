@@ -28,6 +28,7 @@ from modules.weekly_market_prep import (
 )
 from modules.news_scraper import fetch_all_events, fetch_all_news
 from modules.operational import operational_state
+from modules.pair_spec import get_pair_spec
 from modules.price_feed import PROVIDER as PRICE_PROVIDER, fetch_candles
 from modules.risk import evaluate_trade
 from modules import scoring
@@ -46,10 +47,11 @@ TIMEFRAMES = {
     "d1": "1d",
 }
 DECISIONS_LOG = Path("logs/decisions.jsonl")
-PAPER_TRADE_DEFAULT_SL_MULT = 1.0
-PAPER_TRADE_DEFAULT_TP_MULT = 2.0
-PAPER_TRADE_DEFAULT_EXPIRY_BARS = 6
-PIP_SIZE = 0.0001
+_PAIR_SPEC = get_pair_spec(PAIR)
+PAPER_TRADE_DEFAULT_SL_MULT = _PAIR_SPEC.sl_atr_mult
+PAPER_TRADE_DEFAULT_TP_MULT = _PAIR_SPEC.tp_atr_mult
+PAPER_TRADE_DEFAULT_EXPIRY_BARS = _PAIR_SPEC.expiry_bars
+PIP_SIZE = _PAIR_SPEC.pip_size
 TIMEFRAME_HOURS = {"1h": 1, "30m": 0.5, "15m": 0.25, "4h": 4, "1d": 24}
 
 
