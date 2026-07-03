@@ -22,7 +22,7 @@ class TestReadHistdata1min:
         assert df.iloc[0]["close"] == 1.10020
 
 
-class TestAggregateToHourly:
+class TestAggregateTo:
     def test_ohlc_aggregation_rules(self):
         idx = pd.to_datetime([
             "2024-01-02 14:00:00", "2024-01-02 14:01:00", "2024-01-02 14:59:00",
@@ -34,7 +34,7 @@ class TestAggregateToHourly:
             "close": [1.1001, 1.1010, 1.1012],
             "volume": [10, 20, 30],
         }, index=idx)
-        hourly = ih._aggregate_to_hourly(df)
+        hourly = ih._aggregate_to(df, "1h")
         assert len(hourly) == 1
         row = hourly.iloc[0]
         assert row["open"] == 1.1000       # primeira candle do minuto
@@ -42,6 +42,16 @@ class TestAggregateToHourly:
         assert row["low"] == 1.0995        # mínimo da hora
         assert row["close"] == 1.1012      # última candle do minuto
         assert row["volume"] == 60
+
+    def test_different_rules_produce_different_bar_counts(self):
+        idx = pd.date_range("2024-01-02 00:00:00", periods=8 * 60, freq="1min", tz="UTC")
+        df = pd.DataFrame({
+            "open": 1.10, "high": 1.11, "low": 1.09, "close": 1.10, "volume": 1.0,
+        }, index=idx)
+        assert len(ih._aggregate_to(df, "15min")) == 32   # 8h / 15min
+        assert len(ih._aggregate_to(df, "1h")) == 8
+        assert len(ih._aggregate_to(df, "4h")) == 2
+        assert len(ih._aggregate_to(df, "1D")) == 1
 
 
 class TestReadGenericOhlcv:
@@ -102,7 +112,7 @@ class TestImportHistoryIntegration:
         )
 
         stats = ih.import_history(csv_path, "EUR/USD", "ohlcv", timeframe="1h")
-        assert stats["imported"] == 2
+        assert stats["timeframes"]["1h"]["imported"] == 2
 
         rows = memory_db.execute(
             "SELECT COUNT(*) AS n FROM market_candles WHERE pair = ? AND timeframe = ?",
@@ -127,5 +137,30 @@ class TestImportHistoryIntegration:
             "2024-01-02 15:00:00,1.1005,1.1020,1.1000,1.1015,1200\n"
         )
         stats = ih.import_history(csv_path, "EUR/USD", "ohlcv", timeframe="1h")
-        assert stats["imported"] == 2
-        assert len(stats["gaps"]) == 1
+        assert stats["timeframes"]["1h"]["imported"] == 2
+        assert len(stats["timeframes"]["1h"]["gaps"]) == 1
+
+    def test_histdata1m_populates_all_four_timeframes(self, memory_db, tmp_path):
+        """Regressão: importar só 1h deixava M15/H4/D1 permanentemente
+        NEUTRAL no backtest (candles_by_timeframe sempre vazio)."""
+        csv_path = tmp_path / "eurusd_m1.csv"
+        start = datetime(2024, 1, 2, 9, 0, tzinfo=timezone.utc)  # EST -> 14:00 UTC
+        lines = []
+        price = 1.1000
+        for i in range(10 * 60):  # 10h de candles de 1 minuto
+            ts = start + timedelta(minutes=i)
+            price = round(price + 0.00001, 5)
+            lines.append(f"{ts.strftime('%Y%m%d %H%M%S')};{price};{price+0.0002};{price-0.0002};{price};10")
+        csv_path.write_text("\n".join(lines) + "\n")
+
+        stats = ih.import_history(csv_path, "EUR/USD", "histdata1m")
+        assert set(stats["timeframes"].keys()) == {"15m", "1h", "4h", "1d"}
+        assert stats["timeframes"]["1h"]["imported"] > 0
+        assert stats["timeframes"]["15m"]["imported"] > 0
+
+        for tf in ("15m", "1h", "4h", "1d"):
+            rows = memory_db.execute(
+                "SELECT COUNT(*) AS n FROM market_candles WHERE pair = ? AND timeframe = ?",
+                ("EUR/USD", tf),
+            ).fetchone()
+            assert rows["n"] > 0, f"timeframe {tf} deveria ter candles importadas"
