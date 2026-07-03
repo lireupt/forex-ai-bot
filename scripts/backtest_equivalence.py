@@ -14,6 +14,22 @@ a IA influencia o sinal ao vivo.
 Requer um snapshot local da DB de produção (nunca liga ao servidor —
 copiar via `sqlite3 '.backup'` no VPS e trazer o ficheiro para local).
 
+LIMITAÇÃO CONHECIDA (documentada após validação contra 32 trades reais,
+2026-06-16 a 2026-07-03): mesmo depois de corrigir dois bugs reais do
+motor (backtest_runner.py sem load_dotenv(); fuga de futuro em
+HistoricalProvider.candles_up_to(), que incluía a candle ainda em
+formação em vez de cortar estritamente antes de `t`), a tolerância de 0.5
+pip do nível (a) não é atingida sempre. A causa residual não é lógica de
+decisão — é granularidade de dados: com candles só de 1h, o melhor
+`current_price` possível é o fecho da hora anterior, enquanto o live usa
+um preço fresco colhido ~5 minutos dentro da hora seguinte (cron a
+"5 * * * *"). Isso desloca entry/SL/TP por poucos pips (tipicamente
+1-16 pips nos testes feitos), sem alterar a direcção do sinal nem, na
+maioria dos casos, o resultado (win/loss/expired). Fechar este gap
+exigiria importar candles de granularidade mais fina (1-5 min) e usá-las
+só para o current_price — fora do âmbito desta fase; considerar para
+trabalho futuro se a precisão ao pip se tornar necessária.
+
 Uso:
     python scripts/backtest_equivalence.py --pair EUR/USD --from 2026-06-30 --to 2026-07-15 \
         --db /caminho/para/snapshot_producao.db
