@@ -25,12 +25,14 @@ Uso:
 
 import argparse
 import json
+import os
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -39,6 +41,8 @@ if str(ROOT) not in sys.path:
 from modules import database, decision_engine  # noqa: E402
 from modules.pair_spec import get_pair_spec  # noqa: E402
 from modules.trade_simulator import simulate_trade  # noqa: E402
+
+load_dotenv()
 
 TIMEFRAMES = {"m15": "15m", "h1": "1h", "h4": "4h", "d1": "1d"}
 TIMEFRAME_HOURS = {"15m": 0.25, "1h": 1, "4h": 4, "1d": 24}
@@ -130,11 +134,20 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None, ai_result_
     config = dict(config or {})
     pair_spec = get_pair_spec(pair)
     timeframe = config.get("timeframe", "1h")
-    gating_mode = config.get("gating_mode", "score")
+    # Mesma resolução que main.py: --config vence, depois env (o que o live
+    # realmente usa), depois o default do PairSpec (dentro de
+    # compute_trade_levels, quando sl_mult/tp_mult/expiry_bars ficam None).
+    gating_mode = config.get("gating_mode") or os.getenv("GATING_MODE") or "score"
     apply_spread = config.get("apply_spread", True)
     sl_mult = config.get("sl_mult")
+    if sl_mult is None and os.getenv("PAPER_TRADE_SL_MULT"):
+        sl_mult = float(os.getenv("PAPER_TRADE_SL_MULT"))
     tp_mult = config.get("tp_mult")
+    if tp_mult is None and os.getenv("PAPER_TRADE_TP_MULT"):
+        tp_mult = float(os.getenv("PAPER_TRADE_TP_MULT"))
     expiry_bars = config.get("expiry_bars")
+    if expiry_bars is None and os.getenv("PAPER_TRADE_EXPIRY_BARS"):
+        expiry_bars = int(float(os.getenv("PAPER_TRADE_EXPIRY_BARS")))
     candle_provider = config.get("candle_provider")
 
     if db_path:

@@ -70,6 +70,59 @@ class TestRunBacktestSmoke:
             )
 
 
+class TestEnvFallback:
+    """Regressão: backtest_runner nunca chamava load_dotenv() e sl_mult/
+    tp_mult/expiry_bars/gating_mode nunca liam PAPER_TRADE_SL_MULT/
+    TP_MULT/EXPIRY_BARS/GATING_MODE do ambiente (só main.py o fazia) —
+    descoberto ao comparar contra trades reais de produção (Passo 7): o
+    backtest usava sempre o default do PairSpec/código, ignorando o que
+    estava realmente configurado no live."""
+
+    def test_picks_up_paper_trade_mults_and_gating_mode_from_env(self, memory_db, monkeypatch):
+        monkeypatch.setenv("PAPER_TRADE_SL_MULT", "2.0")
+        monkeypatch.setenv("PAPER_TRADE_TP_MULT", "4.0")
+        monkeypatch.setenv("PAPER_TRADE_EXPIRY_BARS", "12")
+        monkeypatch.setenv("GATING_MODE", "strict")
+
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        candles = _synthetic_hourly_candles(30, start)
+        database.save_market_candles(memory_db, candles, "EUR/USD", "1h", "import")
+        memory_db.commit()
+
+        stats = br.run_backtest(
+            "EUR/USD",
+            (start + timedelta(hours=10)).isoformat(),
+            (start + timedelta(hours=15)).isoformat(),
+        )
+        conn = database.connect()
+        run_row = database.get_backtest_run(conn, stats["run_id"])
+        conn.close()
+
+        assert run_row["config"]["sl_mult"] == 2.0
+        assert run_row["config"]["tp_mult"] == 4.0
+        assert run_row["config"]["expiry_bars"] == 12
+        assert run_row["config"]["gating_mode"] == "strict"
+
+    def test_explicit_config_overrides_env(self, memory_db, monkeypatch):
+        monkeypatch.setenv("PAPER_TRADE_SL_MULT", "2.0")
+
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        candles = _synthetic_hourly_candles(30, start)
+        database.save_market_candles(memory_db, candles, "EUR/USD", "1h", "import")
+        memory_db.commit()
+
+        stats = br.run_backtest(
+            "EUR/USD",
+            (start + timedelta(hours=10)).isoformat(),
+            (start + timedelta(hours=15)).isoformat(),
+            config={"sl_mult": 3.0},
+        )
+        conn = database.connect()
+        run_row = database.get_backtest_run(conn, stats["run_id"])
+        conn.close()
+        assert run_row["config"]["sl_mult"] == 3.0
+
+
 class TestRowsToDf:
     """Regressão: uma candle 1d gravada por outra parte do sistema (provider
     'yahoo') com candle_time sem offset de fuso partia pd.to_datetime()
