@@ -110,7 +110,12 @@ class BacktestState:
         return list(reversed(self.decisions))[:limit]
 
 
-def run_backtest(pair, date_from, date_to, config=None, db_path=None):
+def run_backtest(pair, date_from, date_to, config=None, db_path=None, ai_result_provider=None):
+    """`ai_result_provider`, se dado, é `candle_time_iso -> ai_result | None`
+    — ponto de injeção para a Fase B (replay de IA com scores históricos
+    reais) e para o teste de equivalência (Passo 7), que injeta os
+    `ai_score` reais gravados nas decisões live. Sem provider, `ai_result`
+    fica None (Fase A, ai_score efectivamente 0)."""
     config = dict(config or {})
     pair_spec = get_pair_spec(pair)
     timeframe = config.get("timeframe", "1h")
@@ -171,6 +176,7 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None):
         # 2) Construir o MarketContext point-in-time e decidir.
         candles_by_tf = {role: provider.candles_up_to(tf, t) for role, tf in TIMEFRAMES.items()}
         cooldown_since = t - timedelta(hours=COOLDOWN_LOOKBACK_HOURS)
+        ai_result = ai_result_provider(row["candle_time"]) if ai_result_provider else None
         ctx = decision_engine.MarketContext(
             pair=pair,
             timeframe=timeframe,
@@ -179,7 +185,7 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None):
             candles_by_timeframe=candles_by_tf,
             events=provider.high_impact_events(),
             high_impact_events=provider.high_impact_events(),
-            ai_result=None,  # Fase A — ver decision_engine.DEFAULT_AI_RESULT (ai_score=0)
+            ai_result=ai_result,  # None -> Fase A (decision_engine.DEFAULT_AI_RESULT, ai_score=0)
             news_score=0.0,
             recent_paper_trades=state.recent_trades_since(cooldown_since),
             last_closed_paper_trade=state.last_closed_trade(),
@@ -237,7 +243,7 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None):
     }
 
 
-def _to_utc_iso(date_str):
+def to_utc_iso(date_str):
     dt = datetime.fromisoformat(date_str)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
@@ -268,7 +274,7 @@ def main():
 
     config = _load_config(args.config)
     stats = run_backtest(
-        args.pair, _to_utc_iso(args.date_from), _to_utc_iso(args.date_to),
+        args.pair, to_utc_iso(args.date_from), to_utc_iso(args.date_to),
         config=config, db_path=args.db,
     )
     print(f"[backtest_runner] run_id={stats['run_id']}")
