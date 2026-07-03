@@ -22,3 +22,54 @@ Não arquiva a DB (ao contrário do `reset_and_bootstrap.sh`).
 # limpar logs com mais de 30 dias
 30 3 * * * find /root/forex-ai-bot/logs -type f -name "*.log" -mtime +30 -delete
 ```
+
+## Backtest
+
+Motor de backtest paralelo ao live, que reutiliza a mesma cadeia de decisão
+(`modules/decision_engine.decide()`) — a única diferença entre live e
+backtest é a origem dos dados. Fase A: sem replay da IA (`ai_score=0`);
+valida a espinha dorsal técnica + gating + filtro macro. Só EUR/USD por
+agora. Nunca escreve nas tabelas de produção (`paper_trades`, `decisions`)
+— usa tabelas próprias (`backtest_runs`, `backtest_decisions`,
+`backtest_trades`) isoladas por `run_id`.
+
+**1. Importar histórico** para `market_candles` (formato HistData.com
+1-minuto, agregado para 1h, ou CSV OHLCV genérico já na timeframe):
+
+```bash
+venv/bin/python scripts/import_history.py --file EURUSD_2024_M1.csv --pair EUR/USD --format histdata1m
+venv/bin/python scripts/import_history.py --file eurusd_1h.csv --pair EUR/USD --format ohlcv --timeframe 1h
+```
+
+Reporta buracos > 3h fora do fecho semanal normal do forex; nunca inventa
+candles para os preencher.
+
+**2. Correr o backtest**, candle a candle, point-in-time estrito:
+
+```bash
+venv/bin/python backtest_runner.py --pair EUR/USD --from 2024-01-01 --to 2026-06-30
+venv/bin/python backtest_runner.py --pair EUR/USD --from 2024-01-01 --to 2026-06-30 --config overrides.json
+```
+
+`overrides.json` pode ter, por exemplo, `{"gating_mode": "score", "apply_spread": true, "sl_mult": 1.0, "tp_mult": 2.0}`.
+Imprime o `run_id` no fim — precisas dele para o relatório.
+
+**3. Ler o relatório** de um `run_id`:
+
+```bash
+venv/bin/python scripts/backtest_report.py --run-id <run_id>
+venv/bin/python scripts/backtest_report.py --run-id <run_id> --csv   # exporta também para logs/
+```
+
+Win rate, profit factor, expectância em R, total de pips, max drawdown,
+maior sequência de perdas, breakdown mensal, breakdown por sessão (UTC) e
+distribuição de `blocking_reason`.
+
+**Teste de equivalência** (backtest vs trades reais do live, para o mesmo
+período — requer um snapshot local da DB de produção, nunca liga ao
+servidor):
+
+```bash
+venv/bin/python scripts/backtest_equivalence.py --pair EUR/USD --from 2026-06-30 --to 2026-07-15 \
+    --db /caminho/para/snapshot_producao.db
+```

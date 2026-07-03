@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 venv/
 __pycache__/
 *.pyc
@@ -11,3 +13,6 @@ logs/
 data/
 web/data.json
 web/data.json.tmp
+
+# Histórico descarregado para backtest (grande, não versionar)
+EURUSD_data/

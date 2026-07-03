@@ -37,6 +37,32 @@ class TestNormaliseAIObservability:
         assert item["ai_analysis_text"] == export_logs.AI_ANALYSIS_UNAVAILABLE
 
 
+class TestNormaliseAiConfidence:
+    """Regressão: `d.ai_confidence` no dashboard (web/index.html) lê o campo
+    de topo — antes deste fix, `_normalise` só produzia `ai_confidence_score`
+    (unit [0,1]), deixando `ai_confidence` sempre ausente/None no export."""
+
+    def test_reconstructs_raw_confidence_from_unit_score(self):
+        item = export_logs._normalise({
+            "timestamp": "2026-05-06T19:00:00+00:00",
+            "ai_confidence_score": 0.72,
+        })
+        assert item["ai_confidence"] == 72
+        assert item["ai_confidence_score"] == 0.72
+
+    def test_none_when_confidence_score_missing(self):
+        item = export_logs._normalise({"timestamp": "2026-05-06T19:00:00+00:00"})
+        assert item["ai_confidence"] is None
+
+    def test_matches_features_snapshot_ai_confidence_when_present(self):
+        item = export_logs._normalise({
+            "timestamp": "2026-05-06T19:00:00+00:00",
+            "ai_confidence_score": 0.05,
+            "ai_features_snapshot": '{"ai_confidence": 5}',
+        })
+        assert item["ai_confidence"] == item["ai_features_snapshot"]["ai_confidence"] == 5
+
+
 class TestNormaliseAdaptiveRisk:
     def test_surfaces_adaptive_fields_from_gate_diagnostics(self):
         item = export_logs._normalise({

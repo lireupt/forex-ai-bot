@@ -2,33 +2,15 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
 from pathlib import Path
+
+from modules import analytics_metrics
+from modules import decision_engine
+from modules.event_rules import parse_event_time as _parse_event_time
 
 PIP_SIZE = 0.0001
 
 DB_PATH = Path("data/forex_bot.db")
-
-HIGH_IMPACT_EVENT_WHITELIST = (
-    "CPI",
-    "Core CPI",
-    "PCE",
-    "Core PCE",
-    "Nonfarm Payrolls",
-    "NFP",
-    "Unemployment Rate",
-    "GDP",
-    "Retail Sales",
-    "PMI",
-    "ISM",
-    "FOMC",
-    "Fed Rate Decision",
-    "ECB Rate Decision",
-    "ECB Press Conference",
-    "Interest Rate Decision",
-    "Powell Speech",
-    "Lagarde Speech",
-)
 
 
 def utc_now():
@@ -242,6 +224,60 @@ def init_db(conn):
             should_reduce_risk INTEGER,
             raw_response_json TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS backtest_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT UNIQUE NOT NULL,
+            pair TEXT NOT NULL,
+            date_from TEXT NOT NULL,
+            date_to TEXT NOT NULL,
+            config_json TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            status TEXT NOT NULL DEFAULT 'running',
+            total_candles INTEGER,
+            total_decisions INTEGER,
+            total_trades INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS backtest_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            candle_time TEXT NOT NULL,
+            signal TEXT,
+            confidence INTEGER,
+            combined_score REAL,
+            trade_allowed INTEGER,
+            block_reason TEXT,
+            blocking_reason TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS backtest_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            pair TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            simulated_sl REAL NOT NULL,
+            simulated_tp REAL NOT NULL,
+            sl_pips REAL,
+            tp_pips REAL,
+            atr_pips REAL,
+            created_at TEXT NOT NULL,
+            expiry_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            close_price REAL,
+            closed_at TEXT,
+            close_reason TEXT,
+            result_pips REAL,
+            result_r_multiple REAL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_backtest_decisions_run
+            ON backtest_decisions(run_id);
+        CREATE INDEX IF NOT EXISTS idx_backtest_trades_run
+            ON backtest_trades(run_id);
         """
     )
     _ensure_ai_analysis_columns(conn)
@@ -490,23 +526,6 @@ def get_recent_events(conn, since_iso):
     return _rows_to_dicts(rows)
 
 
-def _parse_event_time(value):
-    if not value:
-        return None
-
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        try:
-            parsed = parsedate_to_datetime(value)
-        except (TypeError, ValueError, IndexError, OverflowError):
-            return None
-
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
 def _env_bool(name, default):
     value = os.getenv(name)
     if value is None or value.strip() == "":
@@ -524,22 +543,12 @@ def _env_int(name, default):
         return default
 
 
-def _event_is_whitelisted(title):
-    title_upper = (title or "").upper()
-    return any(item.upper() in title_upper for item in HIGH_IMPACT_EVENT_WHITELIST)
-
-
-def find_high_impact_event_nearby(conn, window_minutes, relevant_currencies=None):
-    if not _env_bool("EVENT_FILTER_ENABLED", True):
-        return {
-            "dangerous_event_nearby": False,
-            "dangerous_event_reason": "",
-            "event_gate_reason": "event_filter_disabled",
-            "ignored_events": [],
-        }
-
-    now = datetime.now(timezone.utc)
-    rows = conn.execute(
+def get_high_impact_events(conn):
+    """Todos os eventos de alto impacto guardados em `economic_events` —
+    usado tanto por `find_high_impact_event_nearby` (live) como para
+    alimentar `modules.decision_engine.MarketContext.high_impact_events`
+    (backtest), garantindo que ambos partem do mesmo universo de dados."""
+    raw_rows = conn.execute(
         """
         SELECT title, country, impact, event_time, source
         FROM economic_events
@@ -547,65 +556,20 @@ def find_high_impact_event_nearby(conn, window_minutes, relevant_currencies=None
         ORDER BY event_time ASC
         """
     ).fetchall()
+    return [dict(row) for row in raw_rows]
 
-    relevant = None
-    if relevant_currencies:
-        relevant = {c.strip().upper() for c in relevant_currencies if c}
 
-    ignored = []
-    for row in rows:
-        event_time = _parse_event_time(row["event_time"])
-        if event_time is None:
-            continue
+def find_high_impact_event_nearby(conn, window_minutes, relevant_currencies=None):
+    enabled = _env_bool("EVENT_FILTER_ENABLED", True)
+    rows = get_high_impact_events(conn) if enabled else []
 
-        minutes = abs((event_time - now).total_seconds()) / 60
-        if minutes > window_minutes:
-            continue
-
-        title = row["title"] or ""
-        if not _event_is_whitelisted(title):
-            ignored.append({
-                "reason": "event_ignored_not_whitelisted",
-                "currency": row["country"],
-                "title": title,
-                "time": row["event_time"],
-            })
-            continue
-
-        currency = (row["country"] or "").strip().upper()
-        if relevant is not None and currency and currency not in relevant:
-            ignored.append({
-                "reason": "event_ignored_wrong_currency",
-                "currency": row["country"],
-                "title": title,
-                "time": row["event_time"],
-            })
-            continue
-
-        direction = "daqui a" if event_time >= now else "há"
-        return {
-            "dangerous_event_nearby": True,
-            "dangerous_event_reason": (
-                f"evento high impact {direction} {round(minutes)} min: "
-                f"{row['country']} {row['title']}"
-            ),
-            "event_gate_reason": "high_impact_event_nearby",
-            "event": {
-                "currency": row["country"],
-                "title": title,
-                "time": row["event_time"],
-                "source": row["source"],
-                "minutes": round(minutes),
-            },
-            "ignored_events": ignored[-10:],
-        }
-
-    return {
-        "dangerous_event_nearby": False,
-        "dangerous_event_reason": "",
-        "event_gate_reason": "",
-        "ignored_events": ignored[-10:],
-    }
+    return decision_engine.resolve_event_gate(
+        rows,
+        datetime.now(timezone.utc),
+        window_minutes,
+        relevant_currencies=relevant_currencies,
+        enabled=enabled,
+    )
 
 
 def save_market_candles(conn, candles, pair, timeframe, provider):
@@ -937,6 +901,23 @@ def get_recent_paper_trades_for_direction(conn, pair, source, direction, since_i
         ORDER BY created_at DESC
         """,
         (pair, source, direction, since_iso),
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def get_recent_paper_trades_since(conn, pair, source, since_iso):
+    """Como `get_recent_paper_trades_for_direction` mas sem filtrar por
+    direcção — usado para alimentar `modules.decision_engine.MarketContext`
+    com histórico suficiente para recalcular cooldown por qualquer direcção
+    de forma pura."""
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM paper_trades
+        WHERE pair = ? AND source = ? AND created_at >= ?
+        ORDER BY created_at DESC
+        """,
+        (pair, source, since_iso),
     ).fetchall()
     return _rows_to_dicts(rows)
 
@@ -1442,6 +1423,29 @@ def get_recent_gating_decisions(conn, pair, limit=5):
     return _rows_to_dicts(rows)
 
 
+def get_recent_decisions_for_context(conn, pair, limit=30):
+    """Colunas necessárias para `modules.decision_engine` recalcular, de
+    forma pura, tanto o signal persistence (as `limit` mais recentes, dos
+    quais só as primeiras N contam) como as métricas de performance
+    (`modules.analytics_metrics`) — uma única query cobre ambos os usos que
+    hoje são duas queries separadas (`get_recent_gating_decisions` e a
+    query de `decisions` dentro de `calculate_analytics_metrics`)."""
+    rows = conn.execute(
+        """
+        SELECT timestamp, pair, combined_signal, gating_signal, gating_confidence,
+               trade_allowed, block_reason, combined_score, ai_score,
+               multi_timeframe_score, technical_score_h4, technical_score_d1,
+               timeframe_alignment
+        FROM decisions
+        WHERE pair = ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (pair, limit),
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
 def get_recent_decision_quality(conn, limit=20):
     rows = conn.execute(
         """
@@ -1847,27 +1851,6 @@ def get_aggregator_analysis(conn, since_iso=None, pair=None):
     }
 
 
-def _max_drawdown(values):
-    equity = 0.0
-    peak = 0.0
-    max_dd = 0.0
-    for value in values:
-        equity += value
-        peak = max(peak, equity)
-        max_dd = max(max_dd, peak - equity)
-    return round(max_dd, 4)
-
-
-def _sharpe(values):
-    if len(values) < 2:
-        return None
-    mean = sum(values) / len(values)
-    variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
-    if variance <= 0:
-        return None
-    return round(mean / (variance ** 0.5), 4)
-
-
 def calculate_analytics_metrics(conn, pair=None, limit=500):
     params = []
     where = "WHERE status in ('win', 'loss')"
@@ -1885,12 +1868,6 @@ def calculate_analytics_metrics(conn, pair=None, limit=500):
         tuple(params + [limit]),
     ).fetchall()
     trades = [dict(row) for row in rows]
-    r_values = [float(t["result_r_multiple"]) for t in trades if t.get("result_r_multiple") is not None]
-    wins = [v for v in r_values if v > 0]
-    losses = [v for v in r_values if v < 0]
-    total = len(r_values)
-    gross_profit = sum(wins)
-    gross_loss = abs(sum(losses))
 
     score_params = []
     score_where = ""
@@ -1910,34 +1887,8 @@ def calculate_analytics_metrics(conn, pair=None, limit=500):
         tuple(score_params + [limit]),
     ).fetchall()
     decisions = [dict(row) for row in decision_rows]
-    scores = [float(d["combined_score"]) for d in decisions if d.get("combined_score") is not None]
-    ai_impacts = [abs(float(d["ai_score"])) for d in decisions if d.get("ai_score") is not None]
-    h4d1 = []
-    aligned_allowed = 0
-    aligned_total = 0
-    for d in decisions:
-        if d.get("technical_score_h4") is not None and d.get("technical_score_d1") is not None:
-            h4d1.append(abs(float(d["technical_score_h4"])) + abs(float(d["technical_score_d1"])))
-        alignment = d.get("timeframe_alignment") or ""
-        if "aligned" in alignment:
-            aligned_total += 1
-            if d.get("trade_allowed"):
-                aligned_allowed += 1
 
-    metrics = {
-        "trade_count": total,
-        "winrate": round(len(wins) / total * 100, 2) if total else None,
-        "average_rr": round(sum(r_values) / total, 4) if total else None,
-        "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss else (None if not gross_profit else gross_profit),
-        "expectancy": round(sum(r_values) / total, 4) if total else None,
-        "max_drawdown": _max_drawdown(list(reversed(r_values))) if total else None,
-        "sharpe_ratio": _sharpe(r_values),
-        "average_score": round(sum(scores) / len(scores), 4) if scores else None,
-        "ai_impact": round(sum(ai_impacts) / len(ai_impacts), 4) if ai_impacts else None,
-        "h4_d1_impact": round(sum(h4d1) / len(h4d1), 4) if h4d1 else None,
-        "alignment_success_rate": round(aligned_allowed / aligned_total * 100, 2) if aligned_total else None,
-    }
-    return metrics
+    return analytics_metrics.compute_metrics(trades, decisions)
 
 
 def save_analytics_metrics(conn, pair=None, metrics=None):
@@ -2174,3 +2125,121 @@ def get_recent_rolling_market_context(conn, pair, limit=24):
     result = [_decode_rolling_context_row(r) for r in rows]
     result.reverse()
     return result
+
+
+# ─── Backtest (tabelas isoladas — nunca tocam em paper_trades/decisions) ────
+
+def create_backtest_run(conn, run_id, pair, date_from, date_to, config):
+    conn.execute(
+        """
+        INSERT INTO backtest_runs
+        (run_id, pair, date_from, date_to, config_json, started_at, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'running')
+        """,
+        (run_id, pair, date_from, date_to, json.dumps(config, default=str), utc_now()),
+    )
+    conn.commit()
+
+
+def finish_backtest_run(conn, run_id, total_candles, total_decisions, total_trades, status="completed"):
+    conn.execute(
+        """
+        UPDATE backtest_runs
+        SET finished_at = ?, status = ?, total_candles = ?, total_decisions = ?, total_trades = ?
+        WHERE run_id = ?
+        """,
+        (utc_now(), status, total_candles, total_decisions, total_trades, run_id),
+    )
+    conn.commit()
+
+
+def get_backtest_run(conn, run_id):
+    row = conn.execute(
+        "SELECT * FROM backtest_runs WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    result = dict(row)
+    result["config"] = json.loads(result["config_json"])
+    return result
+
+
+def save_backtest_decision(conn, run_id, candle_time, decision_fields):
+    conn.execute(
+        """
+        INSERT INTO backtest_decisions
+        (run_id, candle_time, signal, confidence, combined_score,
+         trade_allowed, block_reason, blocking_reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            candle_time,
+            decision_fields.get("signal"),
+            decision_fields.get("confidence"),
+            decision_fields.get("combined_score"),
+            int(bool(decision_fields.get("trade_allowed"))),
+            decision_fields.get("block_reason"),
+            decision_fields.get("blocking_reason"),
+            utc_now(),
+        ),
+    )
+
+
+def save_backtest_trade(conn, run_id, pair, trade):
+    cursor = conn.execute(
+        """
+        INSERT INTO backtest_trades
+        (run_id, pair, direction, entry_price, simulated_sl, simulated_tp,
+         sl_pips, tp_pips, atr_pips, created_at, expiry_at, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+        """,
+        (
+            run_id,
+            pair,
+            trade["direction"],
+            trade["entry_price"],
+            trade["simulated_sl"],
+            trade["simulated_tp"],
+            trade.get("sl_pips"),
+            trade.get("tp_pips"),
+            trade.get("atr_pips"),
+            trade["created_at"],
+            trade["expiry_at"],
+        ),
+    )
+    return cursor.lastrowid
+
+
+def update_backtest_trade_result(conn, trade_id, result):
+    conn.execute(
+        """
+        UPDATE backtest_trades
+        SET status = ?, close_price = ?, closed_at = ?, close_reason = ?,
+            result_pips = ?, result_r_multiple = ?
+        WHERE id = ?
+        """,
+        (
+            result.status,
+            result.close_price,
+            result.closed_at,
+            result.close_reason,
+            result.result_pips,
+            result.result_r_multiple,
+            trade_id,
+        ),
+    )
+
+
+def get_backtest_trades(conn, run_id):
+    rows = conn.execute(
+        "SELECT * FROM backtest_trades WHERE run_id = ? ORDER BY id ASC", (run_id,)
+    ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def get_backtest_decisions(conn, run_id):
+    rows = conn.execute(
+        "SELECT * FROM backtest_decisions WHERE run_id = ? ORDER BY id ASC", (run_id,)
+    ).fetchall()
+    return _rows_to_dicts(rows)

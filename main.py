@@ -16,9 +16,9 @@ from modules.ai_analyst import (
 from modules import ai_aggregator
 from modules import context_snapshot
 from modules import database
+from modules import decision_engine
 from modules import rolling_context
 from modules.macro_filter import get_macro_risk
-from modules.market import forex_market_state, is_forex_market_open
 from modules.weekly_market_prep import (
     weekend_mode_config,
     weekly_prep_config,
@@ -27,12 +27,10 @@ from modules.weekly_market_prep import (
     run_weekly_prep,
 )
 from modules.news_scraper import fetch_all_events, fetch_all_news
-from modules.operational import operational_state
+from modules.pair_spec import get_pair_spec
 from modules.price_feed import PROVIDER as PRICE_PROVIDER, fetch_candles
-from modules.risk import evaluate_trade
 from modules import scoring
 from modules import multi_timeframe
-from modules.technical import analyse as analyse_technical
 from scripts.export_logs import export as export_web_data
 
 load_dotenv()
@@ -46,16 +44,13 @@ TIMEFRAMES = {
     "d1": "1d",
 }
 DECISIONS_LOG = Path("logs/decisions.jsonl")
-PAPER_TRADE_DEFAULT_SL_MULT = 1.0
-PAPER_TRADE_DEFAULT_TP_MULT = 2.0
-PAPER_TRADE_DEFAULT_EXPIRY_BARS = 6
-PIP_SIZE = 0.0001
-TIMEFRAME_HOURS = {"1h": 1, "30m": 0.5, "15m": 0.25, "4h": 4, "1d": 24}
+_PAIR_SPEC = get_pair_spec(PAIR)
+PAPER_TRADE_DEFAULT_SL_MULT = _PAIR_SPEC.sl_atr_mult
+PAPER_TRADE_DEFAULT_TP_MULT = _PAIR_SPEC.tp_atr_mult
+PAPER_TRADE_DEFAULT_EXPIRY_BARS = _PAIR_SPEC.expiry_bars
 
 
-def _pair_currencies(pair):
-    base, quote = pair.replace(" ", "").upper().split("/")
-    return {base, quote}
+_pair_currencies = decision_engine._pair_currencies
 INTERNET_CHECK_TARGETS = (
     ("www.google.com", 443),
     ("finance.yahoo.com", 443),
@@ -291,72 +286,17 @@ def _get_candles(conn, cache_config, count=100, timeframe=TIMEFRAME):
     return candles, "fresh"
 
 
-def _get_multi_timeframe_technical(conn, cache_config, count=260):
-    technical_by_tf = {}
+def _fetch_multi_timeframe_candles(conn, cache_config, count=260):
+    """Só a parte de I/O (fetch + cache) da antiga `_get_multi_timeframe_technical`.
+    A análise técnica pura (por timeframe + agregação) corre agora dentro de
+    `decision_engine.decide()`, a partir das candles devolvidas aqui."""
     candles_by_tf = {}
     origins = {}
-    warnings = []
-
     for key, timeframe in TIMEFRAMES.items():
         candles, origin = _get_candles(conn, cache_config, count=count, timeframe=timeframe)
         origins[key] = origin
         candles_by_tf[key] = candles
-        if candles is None or candles.empty:
-            warnings.append(f"{key.upper()} sem candles; usado NEUTRAL 0.0")
-            technical_by_tf[key] = analyse_technical(candles, PAIR, timeframe_role=key)
-            continue
-        technical_by_tf[key] = analyse_technical(candles, PAIR, timeframe_role=key)
-        if (
-            technical_by_tf[key].get("signal") == "NEUTRAL"
-            and technical_by_tf[key].get("indicators", {}).get("technical_score") == 0.0
-            and "Sem candles ou indicadores suficientes" in technical_by_tf[key].get("technical_reason", "")
-        ):
-            warnings.append(f"{key.upper()} com indicadores insuficientes; usado NEUTRAL 0.0")
-
-    aggregate = multi_timeframe.aggregate(technical_by_tf)
-    h1_result = dict(technical_by_tf.get("h1") or analyse_technical(None, PAIR, timeframe_role="h1"))
-    h1_indicators = dict(h1_result.get("indicators") or {})
-    h1_score = aggregate["technical_score_h1"]
-    multi_score = aggregate["multi_timeframe_score"]
-    multi_signal = aggregate["multi_timeframe_signal"]
-    confidence = int(round(abs(multi_score) * 100 * aggregate["timeframe_confidence_adjustment"]))
-    confidence = max(0, min(100, confidence))
-    reason = (
-        f"H1={h1_score:+.2f} continua principal; "
-        f"M15={aggregate['technical_score_m15']:+.2f}, "
-        f"H4={aggregate['technical_score_h4']:+.2f}, "
-        f"D1={aggregate['technical_score_d1']:+.2f}; "
-        f"multi_timeframe_score={multi_score:+.2f} -> {multi_signal}; "
-        f"alinhamento={aggregate['timeframe_alignment']}."
-    )
-    if aggregate["timeframe_notes"]:
-        reason += " " + "; ".join(aggregate["timeframe_notes"]) + "."
-    if warnings:
-        reason += " Avisos: " + "; ".join(warnings) + "."
-
-    h1_indicators.update({
-        "technical_score": multi_score,
-        "technical_signal": multi_signal,
-        "technical_score_m15": aggregate["technical_score_m15"],
-        "technical_score_h1": aggregate["technical_score_h1"],
-        "technical_score_h4": aggregate["technical_score_h4"],
-        "technical_score_d1": aggregate["technical_score_d1"],
-        "multi_timeframe_score": multi_score,
-        "timeframe_alignment": aggregate["timeframe_alignment"],
-        "timeframe_block_reason": aggregate["timeframe_block_reason"],
-    })
-    h1_result.update({
-        "signal": multi_signal,
-        "confidence": confidence,
-        "technical_reason": reason,
-        "indicators": h1_indicators,
-        "timeframe_results": technical_by_tf,
-        "timeframe_candle_status": origins,
-        "timeframe_candle_counts": {tf: len(df) if df is not None else 0 for tf, df in candles_by_tf.items()},
-        "timeframe_warnings": warnings,
-        **aggregate,
-    })
-    return h1_result, candles_by_tf.get("h1"), origins, warnings
+    return candles_by_tf, origins
 
 
 def _get_ai_result(
@@ -395,213 +335,13 @@ def _get_ai_result(
     return result, input_hash, "fresh"
 
 
-def _neutral_reason(ai_score, technical_score, combined_score, ai_signal, technical_signal):
-    if ai_signal != "NEUTRAL" and technical_signal != "NEUTRAL" and ai_signal != technical_signal:
-        return "conflicting_signals"
-    if abs(combined_score or 0.0) < 0.20:
-        return "weak_signal"
-    return "combined_score_below_threshold"
-
-
-def _direction_score(signal):
-    if signal == "BUY":
-        return 1.0
-    if signal == "SELL":
-        return -1.0
-    return 0.0
-
-
-def _ai_context_score(ai_result):
-    bias = (ai_result.get("bias") or ai_result.get("signal") or "NEUTRAL").upper()
-    adjustment = ai_result.get("confidence_adjustment")
-    if adjustment is None:
-        legacy_conf = scoring.confidence_to_unit(ai_result.get("confidence"))
-        adjustment = legacy_conf * 0.20
-    try:
-        adjustment = float(adjustment)
-    except (TypeError, ValueError):
-        adjustment = 0.0
-    # Usar apenas a magnitude; a direcção é sempre definida por `bias`.
-    # Sem abs(), um confidence_adjustment negativo + bias=SELL produzia dupla
-    # negação e o score apontava para BUY: -1 × -0.10 = +0.10.
-    magnitude = min(0.25, abs(adjustment))
-    return round(_direction_score(bias) * magnitude, 4)
-
-
-def _ai_abstains(ai_result):
-    """A IA abstém-se do score combinado quando tem baixa convicção.
-
-    Uma IA com confiança muito baixa (ex.: 5%) não deve diluir um sinal
-    técnico limpo. Quando abstém, o peso da IA é retirado do `combine_scores`
-    (renormalizado para a técnica) em vez de puxar o combinado para a zona
-    neutra. Threshold em escala 0-100 via AI_VOTE_MIN_CONFIDENCE (default 35).
-    """
-    if (ai_result.get("status") or "").lower() == "failed":
-        return True
-    try:
-        conf = float(ai_result.get("confidence") or 0.0)
-    except (TypeError, ValueError):
-        conf = 0.0
-    return conf < _env_float("AI_VOTE_MIN_CONFIDENCE", 35.0)
-
-
-def _decision_confidence_adjustment(technical_result):
-    alignment = technical_result.get("timeframe_alignment") or ""
-    adjustment = 0.0
-    reasons = []
-    if "h1_h4_aligned" in alignment:
-        adjustment += 0.10
-        reasons.append("h1_h4_aligned:+0.10")
-    if "m15_against" in alignment:
-        adjustment -= 0.10
-        reasons.append("m15_against_h1:-0.10")
-    if alignment == "d1_strongly_against_h1":
-        adjustment -= 0.20
-        reasons.append("d1_strongly_against_h1:-0.20")
-    if technical_result.get("timeframe_block_reason"):
-        adjustment -= 0.20
-        reasons.append("h4_d1_strongly_against_h1:-0.20")
-    return round(adjustment, 4), reasons
-
-
-def _combine_signals(ai_result, technical_result, scoring_config=None, news_score=0.0):
-    ai_signal = ai_result.get("signal", "NEUTRAL")
-    technical_signal = technical_result.get("signal", "NEUTRAL")
-    reasoning = ai_result.get("reasoning", "")
-
-    if ai_result.get("status") == "failed":
-        return {
-            "signal": "NEUTRAL",
-            "confidence": 0,
-            "hold_off": True,
-            "reasoning": f"decision_skipped_ai_failed: {reasoning}",
-            "agreement": False,
-            "combined_score": 0.0,
-            "components": {"ai_score": None, "technical_score": None, "news_score": news_score},
-            "neutral_reason": "decision_skipped_ai_failed",
-        }
-
-    scoring_config = scoring_config or scoring.load_combined_scoring_config()
-    indicators = technical_result.get("indicators", {})
-    ai_score = _ai_context_score(ai_result)
-    abstains = _ai_abstains(ai_result)
-    ai_score_for_combine = None if abstains else ai_score
-
-    technical_score = indicators.get("technical_score")
-    if technical_score is None:
-        technical_score = scoring.technical_votes_score(
-            indicators.get("rsi_vote", indicators.get("rsi_signal", "neutral")),
-            indicators.get("ema_vote", indicators.get("ema_trend", "neutral")),
-            indicators.get("macd_vote", indicators.get("macd_signal", "neutral")),
-        )
-    combined_score = scoring.combine_scores(
-        ai_score_for_combine,
-        technical_score,
-        news_score=news_score or None,
-        config=scoring_config,
-    )
-    signal = scoring.score_to_signal(combined_score, scoring_config)
-    timeframe_block_reason = technical_result.get("timeframe_block_reason") or ""
-    confidence_adjustment, confidence_reasons = _decision_confidence_adjustment(technical_result)
-    neutral_reason = ""
-    if signal == "NEUTRAL":
-        neutral_reason = _neutral_reason(
-            ai_score, technical_score, combined_score, ai_signal, technical_signal
-        )
-    if timeframe_block_reason and signal != "NEUTRAL":
-        reasoning = f"{reasoning} [timeframe_block={timeframe_block_reason}]"
-
-    # Log de auditoria: estado do voto da IA e pesos efectivos após renormalização.
-    conf_val = float(ai_result.get("confidence") or 0.0)
-    threshold_val = _env_float("AI_VOTE_MIN_CONFIDENCE", 35.0)
-    if abstains:
-        ai_vote_status = f"abstained:confidence={conf_val:.0f}<threshold={threshold_val:.0f}"
-    else:
-        ai_vote_status = f"included:confidence={conf_val:.0f}:score={ai_score:+.4f}"
-
-    ai_w_eff = scoring_config["ai_weight"] if ai_score_for_combine is not None else 0.0
-    tech_w_eff = scoring_config["technical_weight"]
-    news_w_eff = scoring_config.get("news_weight", 0.0) if news_score else 0.0
-    total_w_eff = ai_w_eff + tech_w_eff + news_w_eff
-    effective_weights = {
-        "ai": round(ai_w_eff / total_w_eff, 4) if total_w_eff > 0 else 0.0,
-        "technical": round(tech_w_eff / total_w_eff, 4) if total_w_eff > 0 else 0.0,
-        "news": round(news_w_eff / total_w_eff, 4) if total_w_eff > 0 else 0.0,
-    }
-
-    return {
-        "signal": signal,
-        "confidence": max(0, min(100, int(round((abs(combined_score) + confidence_adjustment) * 100)))),
-        "hold_off": bool(ai_result.get("hold_off", False)) or bool(timeframe_block_reason),
-        "reasoning": reasoning,
-        "agreement": ai_signal == technical_signal and ai_signal in ("BUY", "SELL"),
-        "combined_score": combined_score,
-        "components": {
-            "ai_score": round(ai_score, 4),
-            "ai_bias": ai_result.get("bias", ai_signal),
-            "ai_confidence_adjustment": ai_result.get("confidence_adjustment", 0.0),
-            "ai_risk_adjustment": ai_result.get("risk_adjustment", 0.0),
-            "technical_score": round(float(technical_score or 0.0), 4),
-            "news_score": round(float(news_score or 0.0), 4),
-            "technical_score_m15": technical_result.get("technical_score_m15"),
-            "technical_score_h1": technical_result.get("technical_score_h1"),
-            "technical_score_h4": technical_result.get("technical_score_h4"),
-            "technical_score_d1": technical_result.get("technical_score_d1"),
-            "multi_timeframe_score": technical_result.get("multi_timeframe_score"),
-            "weights": {
-                "ai": scoring_config["ai_weight"],
-                "technical": scoring_config["technical_weight"],
-                "news": scoring_config.get("news_weight", 0.0),
-            },
-        },
-        "neutral_reason": neutral_reason,
-        "timeframe_block_reason": timeframe_block_reason,
-        "confidence_adjustment": confidence_adjustment,
-        "confidence_adjustment_reasons": confidence_reasons,
-        "ai_vote_status": ai_vote_status,
-        "effective_weights": effective_weights,
-    }
-
-
-def _shadow_combine(ai_result, technical_result):
-    ai_signal = ai_result.get("signal", "NEUTRAL")
-    shadow_signal = technical_result.get("shadow_technical_signal", "NEUTRAL")
-    ai_conf = int(ai_result.get("confidence", 0) or 0)
-    shadow_conf = int(technical_result.get("shadow_technical_confidence", 0) or 0)
-
-    if ai_signal == "NEUTRAL" and shadow_signal == "NEUTRAL":
-        return {
-            "signal": "NEUTRAL",
-            "confidence": 0,
-            "reason": "ambos NEUTRAL",
-        }
-
-    if ai_signal == shadow_signal:
-        return {
-            "signal": ai_signal,
-            "confidence": round((ai_conf + shadow_conf) / 2),
-            "reason": "concordância IA + shadow técnica",
-        }
-
-    if ai_signal == "NEUTRAL" and shadow_signal in ("BUY", "SELL"):
-        return {
-            "signal": shadow_signal,
-            "confidence": round(shadow_conf * 0.6),
-            "reason": "apenas shadow técnica (IA NEUTRAL)",
-        }
-
-    if shadow_signal == "NEUTRAL" and ai_signal in ("BUY", "SELL"):
-        return {
-            "signal": ai_signal,
-            "confidence": round(ai_conf * 0.6),
-            "reason": "apenas IA (shadow NEUTRAL)",
-        }
-
-    return {
-        "signal": "NEUTRAL",
-        "confidence": 0,
-        "reason": f"discordância IA ({ai_signal}) vs shadow ({shadow_signal})",
-    }
+# A cadeia de scoring (neutral_reason, ai_context_score, ai_abstains,
+# decision_confidence_adjustment, combine_signals, shadow_combine) foi
+# extraída para modules.decision_engine — decide() chama-a internamente.
+# Mantemos aqui apenas os aliases usados directamente pelos testes/
+# restante código deste módulo.
+_decision_confidence_adjustment = decision_engine._decision_confidence_adjustment
+_combine_signals = decision_engine._combine_signals
 
 
 def _decision_signature(technical_result, ai_result, combined, current_price):
@@ -922,103 +662,30 @@ def _build_combined_reason(ai_result, technical_result, combined, score_combined
     return base
 
 
-def _build_blocking_reason(combined, trade_decision):
-    block_reason = trade_decision.get("block_reason")
-    if block_reason:
-        return block_reason
-    if combined.get("signal") == "NEUTRAL":
-        return "sinal combinado é NEUTRAL"
-    if combined.get("hold_off"):
-        return "hold_off ativo"
-    return ""
-
-
-def _select_gating_signal(strict_combined, score_signal, combined_score,
-                          shadow_combined, mode):
-    """Devolve a versão de "combined" usada para o gating real.
-
-    - "strict" (default): a regra 3/3 actual. Mantém o comportamento conservador.
-    - "score": usa o score_combined_signal e |combined_score|*100 como confidence.
-      Bom quando os paper trades já validaram o threshold.
-    - "shadow": usa shadow_combined (mistura IA + shadow técnica 2/3).
-
-    Em todos os modos respeitamos `hold_off` da IA — ele só fica True quando
-    há eventos imminent ou contradições fortes.
-    """
-    mode = (mode or "strict").strip().lower()
-    if mode not in {"strict", "score", "shadow"}:
-        mode = "strict"
-
-    if mode == "score":
-        confidence = int(round(abs(combined_score or 0) * 100))
-        return {
-            "signal": score_signal or "NEUTRAL",
-            "confidence": confidence,
-            "hold_off": bool(strict_combined.get("hold_off", True)),
-            "reasoning": (strict_combined.get("reasoning", "") or "")
-            + f" [gating=score, combined_score={(combined_score or 0):+.2f}]",
-            "agreement": bool(strict_combined.get("agreement", False)),
-        }, mode
-
-    if mode == "shadow":
-        return {
-            "signal": shadow_combined.get("signal", "NEUTRAL") or "NEUTRAL",
-            "confidence": int(shadow_combined.get("confidence", 0) or 0),
-            "hold_off": bool(strict_combined.get("hold_off", True)),
-            "reasoning": (shadow_combined.get("reason", "") or "")
-            + " [gating=shadow]",
-            "agreement": bool(strict_combined.get("agreement", False)),
-        }, mode
-
-    return dict(strict_combined), "strict"
+# Selecção do gating signal e blocking_reason — ver modules.decision_engine.
+_build_blocking_reason = decision_engine._build_blocking_reason
+_select_gating_signal = decision_engine._select_gating_signal
 
 
 def _build_paper_trade(decision_id, pair, timeframe, direction, current_price,
                        atr_pips, source, signal_source, created_at_dt):
-    if direction not in ("BUY", "SELL"):
-        return None
-    if current_price is None or current_price <= 0:
-        return None
-
     sl_mult = float(os.getenv("PAPER_TRADE_SL_MULT") or PAPER_TRADE_DEFAULT_SL_MULT)
     tp_mult = float(os.getenv("PAPER_TRADE_TP_MULT") or PAPER_TRADE_DEFAULT_TP_MULT)
     expiry_bars = int(float(os.getenv("PAPER_TRADE_EXPIRY_BARS") or PAPER_TRADE_DEFAULT_EXPIRY_BARS))
 
-    if atr_pips is None or atr_pips <= 0:
-        atr_pips_used = 15.0
-    else:
-        atr_pips_used = float(atr_pips)
-
-    sl_pips = round(atr_pips_used * sl_mult, 1)
-    tp_pips = round(atr_pips_used * tp_mult, 1)
-    atr_price = atr_pips_used * PIP_SIZE
-    if direction == "BUY":
-        sl = current_price - sl_pips * PIP_SIZE
-        tp = current_price + tp_pips * PIP_SIZE
-    else:
-        sl = current_price + sl_pips * PIP_SIZE
-        tp = current_price - tp_pips * PIP_SIZE
-
-    bar_hours = TIMEFRAME_HOURS.get(timeframe, 1)
-    expiry_dt = created_at_dt + timedelta(hours=bar_hours * expiry_bars)
+    levels = decision_engine.compute_trade_levels(
+        direction, current_price, atr_pips, _PAIR_SPEC, created_at_dt,
+        timeframe, sl_mult=sl_mult, tp_mult=tp_mult, expiry_bars=expiry_bars,
+    )
+    if levels is None:
+        return None
 
     return {
         "decision_id": decision_id,
         "pair": pair,
-        "timeframe": timeframe,
-        "direction": direction,
-        "entry_price": round(float(current_price), 5),
-        "simulated_sl": round(float(sl), 5),
-        "simulated_tp": round(float(tp), 5),
-        "sl_pips": sl_pips,
-        "tp_pips": tp_pips,
-        "atr_pips": round(atr_pips_used, 1),
-        "atr_price": round(atr_price, 5),
-        "status": "open",
+        **levels,
         "source": source,
         "signal_source": signal_source,
-        "created_at": created_at_dt.isoformat(),
-        "expiry_at": expiry_dt.isoformat(),
     }
 
 
@@ -1328,88 +995,9 @@ def _is_recent_duplicate(current_sig, last_sig, last_timestamp, window_minutes):
     return age_minutes <= window_minutes
 
 
-def _cooldown_state(conn, pair, source, direction, now_dt=None):
-    enabled = _env_bool("COOLDOWN_ENABLED", True)
-    now_dt = now_dt or datetime.now(timezone.utc)
-    if now_dt.tzinfo is None:
-        now_dt = now_dt.replace(tzinfo=timezone.utc)
-    now_dt = now_dt.astimezone(timezone.utc)
-    max_per_day = _env_int(
-        "MAX_DIRECTION_SIGNALS_PER_DAY",
-        _env_int("MAX_SIGNALS_PER_DIRECTION", 1),
-    )
-    config = {
-        "enabled": enabled,
-        "cooldown_minutes": _env_int(
-            "COOLDOWN_MINUTES",
-            _env_int("COOLDOWN_AFTER_TRADE_HOURS", 2) * 60,
-        ),
-        "after_loss_hours": _env_int("COOLDOWN_AFTER_LOSS_HOURS", 3),
-        "max_direction_signals_per_day": max_per_day,
-        "source": source,
-        "direction": direction,
-    }
-    state = {
-        "cooldown_active": False,
-        "max_direction_signals_reached": False,
-        "reason": "",
-        "config": config,
-    }
-    if not enabled or direction not in ("BUY", "SELL"):
-        return state
-
-    since_cooldown = (now_dt - timedelta(minutes=config["cooldown_minutes"])).isoformat()
-    recent_cooldown = database.get_recent_paper_trades_for_direction(
-        conn, pair, source, direction, since_cooldown
-    )
-    if recent_cooldown:
-        state["cooldown_active"] = True
-        state["reason"] = "cooldown_active"
-        state["recent_same_direction_count"] = len(recent_cooldown)
-        return state
-
-    day_start = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    today_same_direction = database.get_recent_paper_trades_for_direction(
-        conn, pair, source, direction, day_start
-    )
-    if len(today_same_direction) >= config["max_direction_signals_per_day"]:
-        state["max_direction_signals_reached"] = True
-        state["reason"] = "max_direction_signals_reached"
-        state["today_same_direction_count"] = len(today_same_direction)
-        return state
-
-    last_closed = database.get_last_closed_paper_trade(conn, pair, source=source)
-    if last_closed and last_closed.get("status") == "loss":
-        closed_at = last_closed.get("closed_at")
-        try:
-            closed_dt = datetime.fromisoformat(str(closed_at).replace("Z", "+00:00"))
-        except ValueError:
-            closed_dt = None
-        if closed_dt is not None:
-            if closed_dt.tzinfo is None:
-                closed_dt = closed_dt.replace(tzinfo=timezone.utc)
-            hours_since_loss = (now_dt - closed_dt).total_seconds() / 3600
-            if hours_since_loss < config["after_loss_hours"]:
-                state["cooldown_active"] = True
-                state["reason"] = "cooldown_active"
-                state["hours_since_loss"] = round(hours_since_loss, 2)
-                return state
-
-    return state
-
-
-def _signal_persistence(conn, pair, direction, limit=5):
-    if direction not in ("BUY", "SELL"):
-        return 0
-    rows = database.get_recent_gating_decisions(conn, pair, limit=limit)
-    count = 1
-    for row in rows:
-        previous = row.get("gating_signal") or row.get("combined_signal") or "NEUTRAL"
-        if previous == direction:
-            count += 1
-            continue
-        break
-    return count
+# Cooldown e signal persistence agora vivem em modules.decision_engine
+# (cooldown_state / signal_persistence_from_decisions), consumidos por
+# decide() a partir do histórico já carregado no MarketContext.
 
 
 def _run_aggregator_shadow(
@@ -1584,25 +1172,8 @@ def _run_rolling_context(
         return None
 
 
-def _recent_risk_performance(conn, pair, limit=30):
-    trades = database.get_paper_trades(conn, limit=limit, status=None, source="combined")
-    closed = [
-        trade for trade in trades
-        if trade.get("pair") == pair and trade.get("status") in ("win", "loss")
-    ]
-    loss_streak = 0
-    for trade in closed:
-        if trade.get("status") == "loss":
-            loss_streak += 1
-            continue
-        break
-    metrics = database.calculate_analytics_metrics(conn, pair=pair, limit=limit)
-    return {
-        "loss_streak": loss_streak,
-        "max_drawdown": metrics.get("max_drawdown"),
-        "winrate": metrics.get("winrate"),
-        "expectancy": metrics.get("expectancy"),
-    }
+# Performance recente agora vive em modules.decision_engine.risk_performance,
+# consumida por decide() a partir do MarketContext.
 
 
 def _print_signal_outcomes(outcomes):
@@ -1765,11 +1336,16 @@ def main():
     _print_sources(news_sources, event_sources)
 
     print("\n[3/4] A correr análise técnica multi-timeframe...")
-    technical_result, candles, candle_origins, timeframe_warnings = _get_multi_timeframe_technical(
-        conn, cache_config, count=260
-    )
+    candles_by_tf, candle_origins = _fetch_multi_timeframe_candles(conn, cache_config, count=260)
+    candles = candles_by_tf.get("h1")
     candles_origin = candle_origins.get("h1", "unknown")
-    candle_counts = technical_result.get("timeframe_candle_counts") or {}
+    # Snapshot técnico prévio, só para alimentar o prompt da IA — decide()
+    # (mais abaixo) volta a correr a mesma função pura sobre as mesmas
+    # candles; o resultado é determinístico e portanto idêntico.
+    technical_result_for_ai, _tf_warnings = decision_engine.aggregate_multi_timeframe_technical(
+        candles_by_tf, PAIR
+    )
+    candle_counts = technical_result_for_ai.get("timeframe_candle_counts") or {}
     print(
         "      candles: "
         + ", ".join(
@@ -1778,7 +1354,7 @@ def main():
         )
         + f"; H1 principal={len(candles)} ({candles_origin})"
     )
-    for warning in timeframe_warnings:
+    for warning in _tf_warnings:
         print(f"      aviso: {warning}")
 
     print("[4/4] A analisar com IA (com snapshot técnico)...")
@@ -1788,7 +1364,7 @@ def main():
         provider,
         relevant_news,
         events,
-        technical=technical_result,
+        technical=technical_result_for_ai,
         macro_context_snapshot=macro_result["macro_context_snapshot"],
     )
     print(f"      análise IA: {ai_origin} ({input_hash[:12]})")
@@ -1796,54 +1372,69 @@ def main():
     print()
     scoring_config = scoring.load_combined_scoring_config()
     news_score_value, news_score_basis = scoring.news_score(ai_result, relevant_news)
-    combined = _combine_signals(
-        ai_result, technical_result,
+
+    paper_source = "combined"
+    now_utc = datetime.now(timezone.utc)
+    cooldown_probe_config = decision_engine.resolve_cooldown_config()
+    # Margem generosa (dia UTC completo + cooldown configurado + folga) para
+    # garantir que a janela cobre tanto o "hoje" como o cooldown_minutes,
+    # qualquer que seja a hora do ciclo.
+    lookback_hours = max(24.0, cooldown_probe_config["cooldown_minutes"] / 60.0) + 24.0
+    since_iso = (now_utc - timedelta(hours=lookback_hours)).isoformat()
+    recent_paper_trades = database.get_recent_paper_trades_since(conn, PAIR, paper_source, since_iso)
+    last_closed_paper_trade = database.get_last_closed_paper_trade(conn, PAIR, source=paper_source)
+    recent_paper_trades_for_performance = database.get_paper_trades(
+        conn, limit=200, status=None, source=paper_source
+    )
+    recent_decisions = database.get_recent_decisions_for_context(conn, PAIR, limit=30)
+    high_impact_events = database.get_high_impact_events(conn)
+
+    ctx = decision_engine.MarketContext(
+        pair=PAIR,
+        timeframe=TIMEFRAME,
+        now=now_utc,
+        pair_spec=_PAIR_SPEC,
+        candles_by_timeframe=candles_by_tf,
+        events=events,
+        high_impact_events=high_impact_events,
+        ai_result=ai_result,
         scoring_config=scoring_config,
         news_score=news_score_value,
+        recent_paper_trades=recent_paper_trades,
+        last_closed_paper_trade=last_closed_paper_trade,
+        recent_paper_trades_for_performance=recent_paper_trades_for_performance,
+        recent_decisions=recent_decisions,
+        gating_mode=os.getenv("GATING_MODE") or "score",
+        source=paper_source,
+        allow_buy=_env_bool("ALLOW_BUY", True),
+        allow_sell=_env_bool("ALLOW_SELL", True),
+        operational_mode=os.getenv("BOT_MODE") or "trade",
+        operational_tolerance_minutes=_env_int("TRADE_WINDOW_TOLERANCE_MINUTES", 0),
     )
-    shadow_combined = _shadow_combine(ai_result, technical_result)
-    current_price = technical_result.get("indicators", {}).get("current_price")
-    atr_pips = technical_result.get("indicators", {}).get("atr_pips")
+    decision = decision_engine.decide(ctx)
 
-    # Computar scores antes do gating para podermos escolher o sinal efectivo.
-    ai_score_value = _ai_context_score(ai_result)
-    technical_score_value = technical_result.get("indicators", {}).get("technical_score")
-    if technical_score_value is None:
-        technical_score_value = scoring.technical_votes_score(
-            technical_result.get("indicators", {}).get("rsi_vote",
-                technical_result.get("indicators", {}).get("rsi_signal", "neutral")),
-            technical_result.get("indicators", {}).get("ema_vote",
-                technical_result.get("indicators", {}).get("ema_trend", "neutral")),
-            technical_result.get("indicators", {}).get("macd_vote",
-                technical_result.get("indicators", {}).get("macd_signal", "neutral")),
-        )
-    shadow_score_value = scoring.signal_score(
-        technical_result.get("shadow_technical_signal"),
-        technical_result.get("shadow_technical_confidence"),
-    )
-    ai_voted = not _ai_abstains(ai_result)
-    combined_score_value = scoring.combine_scores(
-        ai_score_value if ai_voted else None, technical_score_value,
-        shadow_score=shadow_score_value,
-        news_score=news_score_value or None,
-        config=scoring_config,
-    )
-    score_signal_value = scoring.score_to_signal(combined_score_value, scoring_config)
-    confidence_adjustment, confidence_adjustment_reasons = _decision_confidence_adjustment(technical_result)
+    technical_result = decision.technical_result
+    combined = decision.combined
+    shadow_combined = decision.shadow_combined
+    current_price = decision.current_price
+    atr_pips = decision.atr_pips
+    ai_score_value = decision.ai_score
+    technical_score_value = decision.technical_score
+    shadow_score_value = decision.shadow_score
+    combined_score_value = decision.combined_score
+    score_signal_value = decision.score_signal
+    ai_voted = not decision_engine._ai_abstains(ai_result)
+    gating_mode_used = decision.gating_mode_used
+    gating_combined = decision.gating_combined
+    event_risk = decision.event_risk
+    macro_result = decision.macro_result
+    op_state = decision.operational_state
+    risk_performance = decision.risk_performance
+    gate_context = decision.gate_context
+    trade_decision = decision.trade_decision
 
-    gating_mode = (os.getenv("GATING_MODE") or "score").strip().lower()
-    gating_combined, gating_mode_used = _select_gating_signal(
-        combined, score_signal_value, combined_score_value,
-        shadow_combined, gating_mode,
-    )
-
-    event_risk = database.find_high_impact_event_nearby(
-        conn,
-        _env_int("EVENT_BLOCK_WINDOW_MINUTES", 120),
-        relevant_currencies=_pair_currencies(PAIR),
-    )
-
-    # ── Macro Economic Calendar Filter ───────────────────────────────────────
+    # ── Macro Economic Calendar Filter (apenas print — o filtro já foi
+    # aplicado dentro de decide()) ───────────────────────────────────────────
     if macro_result["macro_block"]:
         print(
             f"[MACRO FILTER] Trade blocked\n"
@@ -1854,79 +1445,14 @@ def main():
             f"  Reason: {macro_result['macro_reason']}"
         )
     elif macro_result["macro_risk_level"] == "medium":
-        factor = _env_float("MACRO_MEDIUM_IMPACT_CONFIDENCE_FACTOR", 0.8)
-        original_conf = gating_combined.get("confidence", 0) / 100.0
-        adjusted_conf = original_conf * factor
-        gating_combined = dict(gating_combined)
-        gating_combined["confidence"] = int(round(adjusted_conf * 100))
         print(
             f"[MACRO FILTER] Confidence reduced\n"
             f"  Pair: {PAIR}\n"
             f"  Event: {macro_result['macro_event_title']}\n"
             f"  Currency: {macro_result['macro_event_currency']}\n"
-            f"  Original confidence: {original_conf:.2f}\n"
-            f"  Adjusted confidence: {adjusted_conf:.2f}"
+            f"  Adjusted confidence: {gating_combined['confidence'] / 100.0:.2f}"
         )
     # ── End Macro Filter ─────────────────────────────────────────────────────
-
-    market_state = forex_market_state()
-    paper_source = "combined"
-    op_state = operational_state(
-        mode=os.getenv("BOT_MODE") or "trade",
-        tolerance_minutes=_env_int("TRADE_WINDOW_TOLERANCE_MINUTES", 0),
-    )
-    cooldown = _cooldown_state(
-        conn,
-        PAIR,
-        paper_source,
-        gating_combined.get("signal"),
-    )
-    signal_persistence = _signal_persistence(conn, PAIR, gating_combined.get("signal"))
-    risk_performance = _recent_risk_performance(conn, PAIR)
-    gate_context = {
-        "market": market_state,
-        "cooldown": cooldown,
-        "event": event_risk,
-        "operational": op_state,
-        "allow_buy": _env_bool("ALLOW_BUY", True),
-        "allow_sell": _env_bool("ALLOW_SELL", True),
-        "ai_status": ai_result.get("status", "ok"),
-        "ai_signal": ai_result.get("signal"),
-        "ai_confidence": ai_result.get("confidence"),
-        "ai_confidence_score": scoring.confidence_to_unit(ai_result.get("confidence")),
-        "ai_bias": ai_result.get("bias", ai_result.get("signal")),
-        "ai_risk_adjustment": ai_result.get("risk_adjustment", 0.0),
-        "confidence_adjustment": confidence_adjustment,
-        "confidence_adjustment_reasons": confidence_adjustment_reasons,
-        "technical_score": technical_score_value,
-        "mtf_signal": technical_result.get("signal"),
-        "multi_timeframe_score": technical_result.get("multi_timeframe_score"),
-        "timeframe_alignment": technical_result.get("timeframe_alignment"),
-        "timeframe_block_reason": technical_result.get("timeframe_block_reason"),
-        "combined_score": combined_score_value,
-        "neutral_reason": combined.get("neutral_reason"),
-        "signal_persistence": signal_persistence,
-        "performance": risk_performance,
-        "macro": macro_result,
-    }
-    trade_decision = evaluate_trade(
-        PAIR,
-        gating_combined,
-        current_price,
-        event_risk,
-        atr_pips=atr_pips,
-        technical_indicators=technical_result.get("indicators", {}),
-        gate_context=gate_context,
-    )
-
-    # Apply macro block after evaluate_trade so all gate diagnostics are intact
-    if macro_result["macro_block"]:
-        trade_decision["trade_allowed"] = False
-        trade_decision["simulated_order"] = None
-        trade_decision["block_reason"] = "high_impact_macro_event"
-        trade_decision.setdefault("gate_reasons", [])
-        if "high_impact_macro_event" not in trade_decision["gate_reasons"]:
-            trade_decision["gate_reasons"].append("high_impact_macro_event")
 
     aggregator_result, aggregator_snapshot = _run_aggregator_shadow(
         conn,
