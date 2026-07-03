@@ -51,18 +51,26 @@ def _rows_to_df(rows):
     if not rows:
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
     df = pd.DataFrame(rows)
-    df["candle_time"] = pd.to_datetime(df["candle_time"])
+    # utc=True tolera candle_time misto (algumas linhas antigas em
+    # market_candles, gravadas por outras partes do sistema, não têm
+    # offset de fuso) — normaliza tudo para UTC em vez de rebentar.
+    df["candle_time"] = pd.to_datetime(df["candle_time"], utc=True, format="mixed")
     df = df.set_index("candle_time")
     return df[["open", "high", "low", "close", "volume"]]
 
 
 class HistoricalProvider:
     """Fonte de dados point-in-time: filtra candles/eventos por timestamp
-    <= t a partir do que já está em `market_candles`/`economic_events`."""
+    <= t a partir do que já está em `market_candles`/`economic_events`.
 
-    def __init__(self, conn, pair):
+    `candle_provider`, se dado, restringe às candles gravadas com essa
+    provider tag (ex.: "import") — evita misturar histórico importado com
+    o que o live foi cacheando entretanto (fontes/qualidade diferentes)."""
+
+    def __init__(self, conn, pair, candle_provider=None):
         self.conn = conn
         self.pair = pair
+        self.candle_provider = candle_provider
         self._high_impact_events = database.get_high_impact_events(conn)
 
     def candles_up_to(self, timeframe, before_dt, count=LOOKBACK_BARS):
@@ -70,11 +78,14 @@ class HistoricalProvider:
         start_dt = before_dt - timedelta(hours=bar_hours * count * 2.5)
         rows = database.get_market_candles_between(
             self.conn, self.pair, timeframe, start_dt.isoformat(), before_dt.isoformat(),
+            provider=self.candle_provider,
         )
         return _rows_to_df(rows).tail(count)
 
     def driving_candles(self, timeframe, date_from, date_to):
-        return database.get_market_candles_between(self.conn, self.pair, timeframe, date_from, date_to)
+        return database.get_market_candles_between(
+            self.conn, self.pair, timeframe, date_from, date_to, provider=self.candle_provider,
+        )
 
     def high_impact_events(self):
         # Estático para toda a corrida — os eventos calendarizados são
@@ -124,13 +135,14 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None, ai_result_
     sl_mult = config.get("sl_mult")
     tp_mult = config.get("tp_mult")
     expiry_bars = config.get("expiry_bars")
+    candle_provider = config.get("candle_provider")
 
     if db_path:
         database.DB_PATH = Path(db_path)
     conn = database.connect()
     database.init_db(conn)
 
-    provider = HistoricalProvider(conn, pair)
+    provider = HistoricalProvider(conn, pair, candle_provider=candle_provider)
     driving = provider.driving_candles(timeframe, date_from, date_to)
     if not driving:
         conn.close()
@@ -264,7 +276,12 @@ def main():
     parser.add_argument("--to", dest="date_to", required=True)
     parser.add_argument(
         "--config", default=None,
-        help="JSON com overrides (gating_mode, apply_spread, sl_mult, tp_mult, expiry_bars, timeframe).",
+        help="JSON com overrides (gating_mode, apply_spread, sl_mult, tp_mult, expiry_bars, timeframe, candle_provider).",
+    )
+    parser.add_argument(
+        "--candle-provider", default=None,
+        help="Restringe market_candles a esta provider tag (ex.: 'import') — evita "
+             "misturar histórico importado com candles cacheadas pelo live.",
     )
     parser.add_argument(
         "--db", default=None,
@@ -273,6 +290,8 @@ def main():
     args = parser.parse_args()
 
     config = _load_config(args.config)
+    if args.candle_provider:
+        config["candle_provider"] = args.candle_provider
     stats = run_backtest(
         args.pair, to_utc_iso(args.date_from), to_utc_iso(args.date_to),
         config=config, db_path=args.db,

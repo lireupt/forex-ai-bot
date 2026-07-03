@@ -68,3 +68,40 @@ class TestRunBacktestSmoke:
                 "2024-01-01T00:00:00+00:00",
                 "2024-01-02T00:00:00+00:00",
             )
+
+
+class TestRowsToDf:
+    """Regressão: uma candle 1d gravada por outra parte do sistema (provider
+    'yahoo') com candle_time sem offset de fuso partia pd.to_datetime()
+    quando misturada com linhas com offset — descoberto ao correr o
+    backtest sobre dados reais."""
+
+    def test_handles_mixed_naive_and_aware_timestamps(self):
+        rows = [
+            {"candle_time": "2025-05-20T00:00:00+00:00", "open": 1.1, "high": 1.11, "low": 1.09, "close": 1.1, "volume": 0},
+            {"candle_time": "2025-05-21T00:00:00", "open": 1.1, "high": 1.11, "low": 1.09, "close": 1.1, "volume": 0},
+        ]
+        df = br._rows_to_df(rows)
+        assert len(df) == 2
+        assert str(df.index.tz) == "UTC"
+
+
+class TestHistoricalProviderCandleFilter:
+    def test_candle_provider_filters_out_other_sources(self, memory_db):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        clean = _synthetic_hourly_candles(10, start)
+        database.save_market_candles(memory_db, clean, "EUR/USD", "1h", "import")
+        dirty = [{
+            "candle_time": (start + timedelta(hours=5)).isoformat(),
+            "open": 9.9, "high": 9.9, "low": 9.9, "close": 9.9, "volume": 0,
+        }]
+        database.save_market_candles(memory_db, dirty, "EUR/USD", "1h", "yahoo")
+        memory_db.commit()
+
+        provider_filtered = br.HistoricalProvider(memory_db, "EUR/USD", candle_provider="import")
+        rows = provider_filtered.driving_candles("1h", start.isoformat(), (start + timedelta(hours=20)).isoformat())
+        assert len(rows) == 10  # só as "import", não a "yahoo" extra
+
+        provider_unfiltered = br.HistoricalProvider(memory_db, "EUR/USD")
+        rows_all = provider_unfiltered.driving_candles("1h", start.isoformat(), (start + timedelta(hours=20)).isoformat())
+        assert len(rows_all) == 11  # sem filtro, vê as 10 "import" + 1 "yahoo" extra
