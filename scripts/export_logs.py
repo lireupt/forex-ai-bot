@@ -65,6 +65,16 @@ def _coerce_float(value):
         return None
 
 
+def _confidence_pct(unit_value):
+    """Reconstrói a confiança bruta (0-100) a partir de `ai_confidence_score`
+    (unit [0,1] já gravado em `decisions`) — o valor bruto original não é
+    persistido, ver Passo 8 do plano do backtest engine."""
+    coerced = _coerce_float(unit_value)
+    if coerced is None:
+        return None
+    return round(coerced * 100)
+
+
 def _parse_features_snapshot(value):
     if value is None or value == "":
         return {}
@@ -236,6 +246,7 @@ def _normalise(row, paper_trade_lookup=None):
         "ai_status": row.get("ai_status") or "ok",
         "neutral_reason": row.get("neutral_reason") or "",
         "ai_score": _coerce_float(row.get("ai_score")),
+        "ai_confidence": _confidence_pct(row.get("ai_confidence_score")),
         "ai_confidence_score": _coerce_float(row.get("ai_confidence_score")),
         "ai_analysis_text": _ai_analysis_text(row),
         "ai_reason": _ai_reason(row),
