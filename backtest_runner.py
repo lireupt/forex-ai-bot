@@ -3,7 +3,8 @@
 Corre candle a candle sobre o histórico já importado em `market_candles`
 (ver `scripts/import_history.py`), construindo a cada passo `t` um
 `MarketContext` filtrado point-in-time — só vê candles/eventos com
-timestamp <= t — e chamando `modules.decision_engine.decide()`, o mesmo
+timestamp < t (candles fechadas antes de t) — e chamando
+`modules.decision_engine.decide()`, o mesmo
 motor de decisão usado pelo live em `main.py`. Quando `trade_allowed`, abre
 uma trade virtual resolvida por `modules.trade_simulator` (spread ligado
 por omissão, regra SL-primeiro em barra ambígua).
@@ -65,7 +66,14 @@ def _rows_to_df(rows):
 
 class HistoricalProvider:
     """Fonte de dados point-in-time: filtra candles/eventos por timestamp
-    <= t a partir do que já está em `market_candles`/`economic_events`.
+    < t (estritamente antes) a partir do que já está em
+    `market_candles`/`economic_events`.
+
+    A candle com candle_time == t ainda não fechou nesse instante — só
+    fecha no fim do seu próprio período (ex.: a candle "07:00" cobre
+    [07:00, 08:00) e só é conhecida por completo às 08:00). Usá-la como
+    "preço actual" às 07:00 seria fuga de futuro — por isso o corte é
+    estrito (`<`), não `<=`.
 
     `candle_provider`, se dado, restringe às candles gravadas com essa
     provider tag (ex.: "import") — evita misturar histórico importado com
@@ -80,8 +88,9 @@ class HistoricalProvider:
     def candles_up_to(self, timeframe, before_dt, count=LOOKBACK_BARS):
         bar_hours = TIMEFRAME_HOURS.get(timeframe, 1)
         start_dt = before_dt - timedelta(hours=bar_hours * count * 2.5)
+        end_dt = before_dt - timedelta(microseconds=1)
         rows = database.get_market_candles_between(
-            self.conn, self.pair, timeframe, start_dt.isoformat(), before_dt.isoformat(),
+            self.conn, self.pair, timeframe, start_dt.isoformat(), end_dt.isoformat(),
             provider=self.candle_provider,
         )
         return _rows_to_df(rows).tail(count)
@@ -179,27 +188,38 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None, ai_result_
 
     for row in driving:
         t = decision_engine.parse_dt(row["candle_time"])
-        current_candle = {
-            "candle_time": row["candle_time"],
-            "open": row["open"], "high": row["high"],
-            "low": row["low"], "close": row["close"], "volume": row["volume"],
-        }
 
-        # 1) Resolver trades abertas com a candle actual (point-in-time).
-        for trade in list(state.open_trades):
-            result = simulate_trade(trade, [current_candle], pair_spec, apply_spread=apply_spread, now_dt=t)
-            if result is None:
-                continue
-            trade["status"] = result.status
-            trade["closed_at"] = result.closed_at
-            trade["close_price"] = result.close_price
-            trade["result_pips"] = result.result_pips
-            trade["result_r_multiple"] = result.result_r_multiple
-            database.update_backtest_trade_result(conn, trade["_id"], result)
-            state.open_trades.remove(trade)
-
-        # 2) Construir o MarketContext point-in-time e decidir.
+        # 1) Construir o MarketContext point-in-time. candles_up_to já exclui
+        # a candle em t (só fecha no fim do seu próprio período — usá-la
+        # "agora" seria fuga de futuro). A última candle 1h devolvida é a
+        # mais recente já fechada, e serve também para resolver trades.
         candles_by_tf = {role: provider.candles_up_to(tf, t) for role, tf in TIMEFRAMES.items()}
+        h1_candles = candles_by_tf.get("h1")
+        last_closed_h1 = None
+        if h1_candles is not None and not h1_candles.empty:
+            last_row = h1_candles.iloc[-1]
+            last_closed_h1 = {
+                "candle_time": h1_candles.index[-1].isoformat(),
+                "open": last_row["open"], "high": last_row["high"],
+                "low": last_row["low"], "close": last_row["close"], "volume": last_row["volume"],
+            }
+
+        # 2) Resolver trades abertas com essa última candle 1h fechada.
+        if last_closed_h1 is not None:
+            for trade in list(state.open_trades):
+                result = simulate_trade(
+                    trade, [last_closed_h1], pair_spec, apply_spread=apply_spread, now_dt=t,
+                )
+                if result is None:
+                    continue
+                trade["status"] = result.status
+                trade["closed_at"] = result.closed_at
+                trade["close_price"] = result.close_price
+                trade["result_pips"] = result.result_pips
+                trade["result_r_multiple"] = result.result_r_multiple
+                database.update_backtest_trade_result(conn, trade["_id"], result)
+                state.open_trades.remove(trade)
+
         cooldown_since = t - timedelta(hours=COOLDOWN_LOOKBACK_HOURS)
         ai_result = ai_result_provider(row["candle_time"]) if ai_result_provider else None
         ctx = decision_engine.MarketContext(

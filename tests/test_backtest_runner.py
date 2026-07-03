@@ -70,6 +70,40 @@ class TestRunBacktestSmoke:
             )
 
 
+class TestPointInTimeStrictness:
+    """Regressão: candles_up_to(tf, before_dt) incluía a candle EM
+    before_dt, que só fecha no fim do seu próprio período — fuga de
+    futuro descoberta ao comparar com trades reais de produção (Passo 7):
+    o backtest usava o close da hora seguinte como "preço actual"."""
+
+    def test_candle_at_before_dt_is_excluded(self, memory_db):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        candles = _synthetic_hourly_candles(5, start)
+        database.save_market_candles(memory_db, candles, "EUR/USD", "1h", "import")
+        memory_db.commit()
+
+        provider = br.HistoricalProvider(memory_db, "EUR/USD")
+        target = start + timedelta(hours=3)
+        df = provider.candles_up_to("1h", target)
+
+        assert len(df) == 3  # candles das horas 0, 1, 2 — não a da hora 3
+        assert df.index[-1] < target
+
+    def test_candle_exactly_at_before_dt_not_double_counted_across_iterations(self, memory_db):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        candles = _synthetic_hourly_candles(5, start)
+        database.save_market_candles(memory_db, candles, "EUR/USD", "1h", "import")
+        memory_db.commit()
+
+        provider = br.HistoricalProvider(memory_db, "EUR/USD")
+        df_at_2 = provider.candles_up_to("1h", start + timedelta(hours=2))
+        df_at_3 = provider.candles_up_to("1h", start + timedelta(hours=3))
+        # a candle da hora 2 só aparece pela primeira vez quando before_dt
+        # avança para depois dela (hora 3), nunca em before_dt=hora 2.
+        assert df_at_2.index[-1] == start + timedelta(hours=1)
+        assert df_at_3.index[-1] == start + timedelta(hours=2)
+
+
 class TestEnvFallback:
     """Regressão: backtest_runner nunca chamava load_dotenv() e sl_mult/
     tp_mult/expiry_bars/gating_mode nunca liam PAPER_TRADE_SL_MULT/
