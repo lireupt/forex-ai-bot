@@ -12,6 +12,7 @@ pipeline principal e os antigos SCORE_* continuam aceites por compatibilidade:
     TECHNICAL_WEIGHT          (default  0.55)
     NEWS_WEIGHT               (default  0.15)
     SCORE_SHADOW_WEIGHT       (default  0.0)  # compat/shadow opcional
+    SCORE_PATTERN_WEIGHT      (default  0.0)  # padrões de candlestick, shadow
 """
 
 import os
@@ -27,6 +28,7 @@ DEFAULT_COMBINED_AI_WEIGHT = 0.30
 DEFAULT_COMBINED_TECHNICAL_WEIGHT = 0.55
 DEFAULT_NEWS_WEIGHT = 0.15
 DEFAULT_SHADOW_WEIGHT = 0.0
+DEFAULT_PATTERN_WEIGHT = 0.0
 
 
 def _env_float(name, default):
@@ -65,6 +67,7 @@ def load_scoring_config():
         "technical_weight": _env_float("SCORE_TECHNICAL_WEIGHT", DEFAULT_TECHNICAL_WEIGHT),
         "news_weight": 0.0,
         "shadow_weight": _env_float("SCORE_SHADOW_WEIGHT", DEFAULT_SHADOW_WEIGHT),
+        "pattern_weight": _env_float("SCORE_PATTERN_WEIGHT", DEFAULT_PATTERN_WEIGHT),
     }
 
 
@@ -81,6 +84,7 @@ def load_combined_scoring_config():
         "technical_weight": _env_float("TECHNICAL_WEIGHT", DEFAULT_COMBINED_TECHNICAL_WEIGHT),
         "news_weight": _env_float("NEWS_WEIGHT", DEFAULT_NEWS_WEIGHT),
         "shadow_weight": _env_float("SCORE_SHADOW_WEIGHT", DEFAULT_SHADOW_WEIGHT),
+        "pattern_weight": _env_float("SCORE_PATTERN_WEIGHT", DEFAULT_PATTERN_WEIGHT),
     }
 
 
@@ -148,13 +152,21 @@ def score_to_signal(score, config=None):
     return "NEUTRAL"
 
 
-def combine_scores(ai_score, technical_score, shadow_score=None, news_score=None, config=None):
+def combine_scores(ai_score, technical_score, shadow_score=None, news_score=None,
+                    pattern_score=None, config=None):
     """Combina scores num único valor ponderado em [-1, 1].
 
     Componentes com valor None são excluídos do numerador E do denominador
     (renormalização proporcional). Componentes com valor 0.0 passados como None
     pelo caller também são excluídos — é semanticamente correcto: 0.0 = neutral,
     sem informação nova, não deve dilatar o denominador.
+
+    `pattern_score` (padrões de candlestick, `modules.candlestick_patterns`) é a
+    4ª componente, shadow por omissão: com `pattern_weight=0.0` (default de
+    `SCORE_PATTERN_WEIGHT`), o termo é ignorado e o resultado é idêntico ao
+    cálculo com 3 componentes. Com `pattern_weight > 0`, a normalização por
+    `total_weight` (soma apenas dos pesos activos) já retira proporcionalmente
+    peso das restantes componentes — não há renormalização manual em separado.
 
     O default usa `load_combined_scoring_config()` (pesos do pipeline principal:
     AI=0.30, tech=0.55, news=0.15, threshold=COMBINED_BUY/SELL_THRESHOLD).
@@ -164,6 +176,7 @@ def combine_scores(ai_score, technical_score, shadow_score=None, news_score=None
     tech_w = config["technical_weight"]
     news_w = config.get("news_weight", 0.0)
     shadow_w = config["shadow_weight"]
+    pattern_w = config.get("pattern_weight", 0.0)
 
     weighted_sum = 0.0
     total_weight = 0.0
@@ -179,6 +192,9 @@ def combine_scores(ai_score, technical_score, shadow_score=None, news_score=None
     if shadow_score is not None and shadow_w > 0:
         weighted_sum += shadow_score * shadow_w
         total_weight += shadow_w
+    if pattern_score is not None and pattern_w > 0:
+        weighted_sum += pattern_score * pattern_w
+        total_weight += pattern_w
 
     if total_weight == 0:
         return 0.0

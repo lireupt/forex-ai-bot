@@ -76,6 +76,13 @@ def _env_bool(name, default):
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def ema(series, length):
+    """Wrapper fino sobre `pandas_ta.ema` — ponto único de cálculo de EMA,
+    reutilizado por `analyse()` e por `modules.candlestick_patterns` (contexto
+    de tendência D1) para evitar duas implementações divergentes."""
+    return ta.ema(series, length=length)
+
+
 def _vote_value(vote):
     return {"bullish": 1.0, "bearish": -1.0}.get(vote, 0.0)
 
@@ -168,9 +175,9 @@ def analyse(candles_df, pair="EUR/USD", timeframe_role=None):
             return _neutral_result()
 
         df["RSI_14"] = ta.rsi(df["close"], length=14)
-        df["EMA_20"] = ta.ema(df["close"], length=20)
-        df["EMA_50"] = ta.ema(df["close"], length=50)
-        df["EMA_200"] = ta.ema(df["close"], length=200)
+        df["EMA_20"] = ema(df["close"], 20)
+        df["EMA_50"] = ema(df["close"], 50)
+        df["EMA_200"] = ema(df["close"], 200)
         df["ATR_14"] = ta.atr(df["high"], df["low"], df["close"], length=14)
         adx = ta.adx(df["high"], df["low"], df["close"], length=14)
         if adx is not None and not adx.empty:

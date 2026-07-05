@@ -1,6 +1,32 @@
 # forex-ai-bot
 Testing IA bot
 
+## Scoring combinado
+
+```
+combined_score = ai_score × AI_WEIGHT + technical_score × TECHNICAL_WEIGHT
+                + news_score × NEWS_WEIGHT + pattern_score × SCORE_PATTERN_WEIGHT
+```
+
+Calculado uma única vez em `modules/decision_engine.decide()` (`modules/scoring.combine_scores`),
+usado tanto pelo live (`main.py`) como pelo backtest (`backtest_runner.py`) — nunca
+há dois caminhos de cálculo. Componentes ausentes (ex.: IA em abstenção por baixa
+confiança) são excluídos do numerador **e** do denominador, renormalizando
+proporcionalmente as restantes.
+
+**Padrões de candlestick** (`modules/candlestick_patterns.py`) são a 4ª
+componente, em **modo shadow** (`SCORE_PATTERN_WEIGHT=0.0` por omissão — não
+afecta nenhuma decisão em produção). Detecta `bullish_engulfing` /
+`bearish_engulfing`, `hammer` / `shooting_star` (pin bar), `inside_bar` e
+`doji` nas últimas candles H1 **fechadas** (nunca a candle em formação),
+ajustado pela tendência D1 (EMA20 vs EMA50): padrão alinhado com D1 mantém o
+score completo, contra D1 reduz para 25%, D1 neutro/indisponível usa 50%. Os
+campos `pattern_score`/`pattern_names`/`pattern_reason`/`pattern_d1_trend`
+ficam gravados em `decisions`/`backtest_decisions` e visíveis no modal
+"Detalhes" do dashboard, mesmo com o peso a zero — para permitir análise
+offline (`scripts/backtest_report.py`, sweeps via `--config`) antes de
+decidir activar o peso em produção.
+
 ## Validação rápida
 
 ```bash

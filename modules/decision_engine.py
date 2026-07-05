@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from modules import multi_timeframe, scoring
 from modules import analytics_metrics
+from modules.candlestick_patterns import PatternResult, detect_patterns
 from modules.event_rules import event_is_whitelisted, parse_event_time
 from modules.macro_filter import get_macro_risk
 from modules.market import forex_market_state
@@ -27,6 +28,7 @@ from modules.risk import evaluate_trade as risk_evaluate_trade
 from modules.technical import analyse as analyse_technical
 
 TIMEFRAME_HOURS = {"1h": 1, "30m": 0.5, "15m": 0.25, "4h": 4, "1d": 24}
+D1_PATTERN_LOOKBACK = 60  # >= candlestick_patterns.D1_MIN_CANDLES (EMA50 precisa de histórico)
 
 DEFAULT_AI_RESULT = {
     "signal": "NEUTRAL",
@@ -71,6 +73,26 @@ def _env_float(name, default):
 def _pair_currencies(pair):
     base, quote = pair.replace(" ", "").upper().split("/")
     return {base, quote}
+
+
+def _closed_candle_dicts(candles_df, count=3):
+    """Últimas `count` candles fechadas de um DataFrame (open/high/low/close),
+    mais antiga primeiro — formato de entrada de `candlestick_patterns.detect_patterns()`.
+    `candles_by_timeframe` já vem filtrado point-in-time por quem constrói o
+    `MarketContext` (live: cache de candles fechadas; backtest: `candles_up_to`
+    com corte estrito `< t`), por isso não há filtragem adicional aqui."""
+    if candles_df is None or candles_df.empty:
+        return []
+    tail = candles_df.tail(count)
+    return [
+        {
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+        }
+        for _, row in tail.iterrows()
+    ]
 
 
 def parse_dt(value):
@@ -141,6 +163,7 @@ class Decision:
     confidence_adjustment: float
     confidence_adjustment_reasons: list
     trade_params: Optional[dict]
+    pattern_result: PatternResult
 
     @property
     def signal(self):
@@ -217,7 +240,8 @@ def _neutral_reason(ai_score, technical_score, combined_score, ai_signal, techni
     return "combined_score_below_threshold"
 
 
-def _combine_signals(ai_result, technical_result, scoring_config=None, news_score=0.0):
+def _combine_signals(ai_result, technical_result, scoring_config=None, news_score=0.0,
+                      pattern_result=None):
     ai_signal = ai_result.get("signal", "NEUTRAL")
     technical_signal = technical_result.get("signal", "NEUTRAL")
     reasoning = ai_result.get("reasoning", "")
@@ -247,10 +271,12 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
             indicators.get("ema_vote", indicators.get("ema_trend", "neutral")),
             indicators.get("macd_vote", indicators.get("macd_signal", "neutral")),
         )
+    pattern_score = (pattern_result.pattern_score if pattern_result else 0.0) or None
     combined_score = scoring.combine_scores(
         ai_score_for_combine,
         technical_score,
         news_score=news_score or None,
+        pattern_score=pattern_score,
         config=scoring_config,
     )
     signal = scoring.score_to_signal(combined_score, scoring_config)
@@ -274,11 +300,13 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
     ai_w_eff = scoring_config["ai_weight"] if ai_score_for_combine is not None else 0.0
     tech_w_eff = scoring_config["technical_weight"]
     news_w_eff = scoring_config.get("news_weight", 0.0) if news_score else 0.0
-    total_w_eff = ai_w_eff + tech_w_eff + news_w_eff
+    pattern_w_eff = scoring_config.get("pattern_weight", 0.0) if pattern_score is not None else 0.0
+    total_w_eff = ai_w_eff + tech_w_eff + news_w_eff + pattern_w_eff
     effective_weights = {
         "ai": round(ai_w_eff / total_w_eff, 4) if total_w_eff > 0 else 0.0,
         "technical": round(tech_w_eff / total_w_eff, 4) if total_w_eff > 0 else 0.0,
         "news": round(news_w_eff / total_w_eff, 4) if total_w_eff > 0 else 0.0,
+        "pattern": round(pattern_w_eff / total_w_eff, 4) if total_w_eff > 0 else 0.0,
     }
 
     return {
@@ -295,6 +323,7 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
             "ai_risk_adjustment": ai_result.get("risk_adjustment", 0.0),
             "technical_score": round(float(technical_score or 0.0), 4),
             "news_score": round(float(news_score or 0.0), 4),
+            "pattern_score": round(float(pattern_score or 0.0), 4),
             "technical_score_m15": technical_result.get("technical_score_m15"),
             "technical_score_h1": technical_result.get("technical_score_h1"),
             "technical_score_h4": technical_result.get("technical_score_h4"),
@@ -304,6 +333,7 @@ def _combine_signals(ai_result, technical_result, scoring_config=None, news_scor
                 "ai": scoring_config["ai_weight"],
                 "technical": scoring_config["technical_weight"],
                 "news": scoring_config.get("news_weight", 0.0),
+                "pattern": scoring_config.get("pattern_weight", 0.0),
             },
         },
         "neutral_reason": neutral_reason,
@@ -705,8 +735,18 @@ def decide(ctx: MarketContext) -> Decision:
     )
     ai_result = ctx.ai_result if ctx.ai_result is not None else dict(DEFAULT_AI_RESULT)
 
+    # Padrões de candlestick (Camada 4, shadow) — calculado aqui, dentro do
+    # motor partilhado, a partir das mesmas candles fechadas que a análise
+    # técnica já usa (`ctx.candles_by_timeframe`). Isto garante que live e
+    # backtest nunca divergem: nenhum dos dois calcula padrões em separado.
+    pattern_result = detect_patterns(
+        _closed_candle_dicts(ctx.candles_by_timeframe.get("h1")),
+        d1_candles=_closed_candle_dicts(ctx.candles_by_timeframe.get("d1"), count=D1_PATTERN_LOOKBACK),
+    )
+
     combined = _combine_signals(
         ai_result, technical_result, scoring_config=scoring_config, news_score=ctx.news_score,
+        pattern_result=pattern_result,
     )
     shadow_combined = _shadow_combine(ai_result, technical_result)
     current_price = technical_result.get("indicators", {}).get("current_price")
@@ -735,6 +775,7 @@ def decide(ctx: MarketContext) -> Decision:
         ai_score_value if ai_voted else None, technical_score_value,
         shadow_score=shadow_score_value,
         news_score=ctx.news_score or None,
+        pattern_score=pattern_result.pattern_score or None,
         config=scoring_config,
     )
     score_signal_value = scoring.score_to_signal(combined_score_value, scoring_config)
@@ -862,4 +903,5 @@ def decide(ctx: MarketContext) -> Decision:
         confidence_adjustment=confidence_adjustment,
         confidence_adjustment_reasons=confidence_adjustment_reasons,
         trade_params=trade_params,
+        pattern_result=pattern_result,
     )
