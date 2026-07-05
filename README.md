@@ -73,3 +73,29 @@ servidor):
 venv/bin/python scripts/backtest_equivalence.py --pair EUR/USD --from 2026-06-30 --to 2026-07-15 \
     --db /caminho/para/snapshot_producao.db
 ```
+
+## Fase B (replay de IA histórico) — em progresso
+
+Estende o backtest para incluir a IA real (não `ai_score=0`), via
+`ai_result_provider` do `backtest_runner`. Requer notícias e análises de
+IA históricas, construídas em dois passos **retomáveis** (cada um tem
+limite de quota diária — corre-se uma vez por dia até completar):
+
+**1. Importar notícias históricas** (Alpha Vantage `NEWS_SENTIMENT`,
+tier grátis: 25 pedidos/dia):
+
+```bash
+venv/bin/python scripts/import_historical_news.py --pair EUR/USD --from 2023-01-01 --to 2025-12-31
+```
+
+**2. Construir o cache diário de IA** (Groq tier grátis: 100k tokens/dia
+≈ ~65 chamadas/dia; usa `ai_analyses`, a mesma tabela de cache do live):
+
+```bash
+venv/bin/python scripts/build_historical_ai_cache.py --pair EUR/USD --from 2023-01-01 --to 2025-12-31
+```
+
+Ambos imprimem quantos dias/meses faltam — corre de novo no dia seguinte
+até "concluído". Não há agendamento automático (agentes cloud não têm
+acesso à DB/`.env` locais) — é mesmo preciso correr manualmente uma vez
+por dia até o cache estar completo.
