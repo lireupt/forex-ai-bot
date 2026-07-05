@@ -93,8 +93,10 @@ venv/bin/python scripts/import_historical_news.py --pair EUR/USD --from 2023-01-
 
 **2. Construir o cache diário de IA** (Groq tier grátis: 100k tokens/dia
 ≈ ~25 chamadas/dia a ~3500 tokens/chamada; usa `ai_analyses`, a mesma
-tabela de cache do live). Define `GROQ_API_KEY_HISTORICAL` para usar uma
-conta dedicada, distinta da `GROQ_API_KEY` do bot ao vivo:
+tabela de cache do live). Define `GROQ_API_KEY_HISTORICAL` (+ `_2`, `_3`,
+... quantas quiseres) para usar contas dedicadas, distintas da
+`GROQ_API_KEY` do bot ao vivo — o script roda automaticamente para a
+chave seguinte ao detetar limite de quota:
 
 ```bash
 venv/bin/python scripts/build_historical_ai_cache.py --pair EUR/USD --from 2023-01-01 --to 2025-12-31

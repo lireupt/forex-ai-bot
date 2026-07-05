@@ -22,12 +22,16 @@ estimados inicialmente), o dia falhado **não avança no ficheiro de
 estado** — a próxima corrida tenta-o de novo, em vez de o saltar
 silenciosamente para sempre.
 
-Se correres isto no mesmo servidor/conta onde o `main.py` ao vivo já
-consome a mesma quota Groq, define `GROQ_API_KEY_HISTORICAL` no `.env`
-com uma chave *diferente* — este script troca-a para `GROQ_API_KEY` só
-no seu próprio processo (nunca mexe em `modules/ai_analyst.py`, nem
-afecta o processo separado do live), evitando que a Fase B e o ciclo
-live disputem a mesma quota diária.
+Usa chaves Groq **dedicadas**, via `GROQ_API_KEY_HISTORICAL` (+
+`GROQ_API_KEY_HISTORICAL_2`, `_3`, ... quantas forem definidas,
+sequenciais) — nunca a `GROQ_API_KEY` do bot ao vivo, para não competir
+pela mesma quota diária. Cada chave dá a sua própria margem de
+`--token-budget`, somadas (N × 90k por omissão). Quando uma chamada
+falha por limite de quota (mensagem de erro com "rate limit"/"quota"/
+"429"), o script roda para a próxima chave disponível e tenta o mesmo
+dia de novo — só desiste (sem avançar o estado) quando todas as chaves
+estiverem esgotadas por hoje. Nunca mexe em `modules/ai_analyst.py`
+nem afeta o processo separado do live.
 
 Uso:
     python scripts/build_historical_ai_cache.py --pair EUR/USD --from 2023-01-01 --to 2025-12-31
@@ -47,9 +51,6 @@ if str(ROOT) not in sys.path:
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv()
 
-if os.getenv("GROQ_API_KEY_HISTORICAL"):
-    os.environ["GROQ_API_KEY"] = os.environ["GROQ_API_KEY_HISTORICAL"]
-
 import backtest_runner as br  # noqa: E402
 from modules import database  # noqa: E402
 from modules.ai_analyst import analyse as analyse_ai, build_analysis_input  # noqa: E402
@@ -57,10 +58,35 @@ from modules.decision_engine import aggregate_multi_timeframe_technical  # noqa:
 from modules.macro_filter import get_macro_risk  # noqa: E402
 from modules.pair_spec import get_pair_spec  # noqa: E402
 
-DEFAULT_TOKEN_BUDGET = 90000  # margem abaixo do limite Groq free tier (100k/dia)
+DEFAULT_TOKEN_BUDGET = 90000  # margem abaixo do limite Groq free tier (100k/dia), por chave
 ESTIMATED_TOKENS_PER_CALL = 3500  # consumo real observado em produção (~3300/chamada, ver [ai-tokens] nos logs live)
 NEWS_LOOKBACK_HOURS = 72
 DEFAULT_STATE_PATH = ROOT / "data" / "historical_ai_cache_state.json"
+GROQ_KEY_ENV_PREFIX = "GROQ_API_KEY_HISTORICAL"
+
+
+def _load_groq_keys():
+    """Lê chaves Groq dedicadas e sequenciais: `GROQ_API_KEY_HISTORICAL`,
+    `_2`, `_3`, ... Lista vazia significa "sem chave dedicada" — nesse
+    caso usa-se a GROQ_API_KEY já definida no ambiente (comportamento de
+    chave única)."""
+    keys = []
+    value = os.getenv(GROQ_KEY_ENV_PREFIX)
+    if value and value != "PLACEHOLDER":
+        keys.append(value)
+    i = 2
+    while True:
+        value = os.getenv(f"{GROQ_KEY_ENV_PREFIX}_{i}")
+        if not value or value == "PLACEHOLDER":
+            break
+        keys.append(value)
+        i += 1
+    return keys
+
+
+def _is_rate_limit_error(result):
+    error = (result.get("error") or "").lower()
+    return "rate limit" in error or "quota" in error or "429" in error
 
 
 def _news_for_day(conn, pair, day_start, lookback_hours=NEWS_LOOKBACK_HOURS):
@@ -143,6 +169,11 @@ def build_historical_ai_cache(
     if day < date_from:
         day = date_from
 
+    groq_keys = _load_groq_keys()
+    key_index = 0
+    exhausted_keys = set()
+    effective_budget = token_budget * max(1, len(groq_keys))
+
     tokens_used = 0
     calls_made = 0
     cached_hits = 0
@@ -150,13 +181,23 @@ def build_historical_ai_cache(
     failed = 0
 
     while day < date_to:
-        if tokens_used + ESTIMATED_TOKENS_PER_CALL > token_budget:
+        if tokens_used + ESTIMATED_TOKENS_PER_CALL > effective_budget:
             break
+
+        if groq_keys:
+            while key_index in exhausted_keys:
+                key_index += 1
+            if key_index >= len(groq_keys):
+                break  # todas as chaves Groq esgotadas por hoje — não avança o estado
+            os.environ["GROQ_API_KEY"] = groq_keys[key_index]
 
         result, _input_hash, was_cached = build_day_analysis(conn, provider_name, pair, day, candle_provider)
         if result.get("status") == "failed":
+            if groq_keys and _is_rate_limit_error(result):
+                exhausted_keys.add(key_index)
+                continue  # tenta o mesmo dia com a próxima chave disponível
             failed += 1
-            break  # não avança o estado — a próxima corrida tenta este dia de novo
+            break  # falha não relacionada com quota — não avança o estado
 
         if was_cached:
             cached_hits += 1
@@ -180,6 +221,7 @@ def build_historical_ai_cache(
         "failed": failed,
         "total_days": total_days,
         "days_remaining": max(0, total_days - days_done),
+        "keys_exhausted": len(exhausted_keys),
     }
 
 
@@ -213,6 +255,11 @@ def main():
         f"({stats['calls_made']} chamadas novas, {stats['cached_hits']} já em cache, "
         f"{stats['failed']} falhas)."
     )
+    if stats.get("keys_exhausted", 0) > 0:
+        print(
+            f"[build_historical_ai_cache] {stats['keys_exhausted']} chave(s) Groq "
+            "atingiram o limite diário — parou graciosamente, progresso guardado."
+        )
     if stats["days_remaining"] > 0:
         print(f"[build_historical_ai_cache] {stats['days_remaining']} dias por fazer — corre de novo amanhã.")
     else:

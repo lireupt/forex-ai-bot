@@ -2,6 +2,7 @@
 orçamento de tokens e retomabilidade."""
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -92,7 +93,103 @@ class TestBuildDayAnalysis:
         assert cached2 is False  # falhou, não ficou em cache -> tenta de novo
 
 
+class TestLoadGroqKeys:
+    def test_no_key_configured_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("GROQ_API_KEY_HISTORICAL", raising=False)
+        monkeypatch.delenv("GROQ_API_KEY_HISTORICAL_2", raising=False)
+        assert bhac._load_groq_keys() == []
+
+    def test_loads_sequential_keys_and_stops_at_gap(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY_HISTORICAL", "gkey-1")
+        monkeypatch.setenv("GROQ_API_KEY_HISTORICAL_2", "gkey-2")
+        monkeypatch.delenv("GROQ_API_KEY_HISTORICAL_3", raising=False)
+        monkeypatch.setenv("GROQ_API_KEY_HISTORICAL_4", "gkey-4")  # ignorada — buraco em _3
+
+        assert bhac._load_groq_keys() == ["gkey-1", "gkey-2"]
+
+
 class TestBuildHistoricalAiCache:
+    def test_rate_limit_rotates_to_next_groq_key_and_retries_same_day(self, memory_db, monkeypatch, tmp_path):
+        _seed_candles(memory_db, days=5)
+        monkeypatch.setenv("GROQ_API_KEY_HISTORICAL", "gkey-1")
+        monkeypatch.setenv("GROQ_API_KEY_HISTORICAL_2", "gkey-2")
+        monkeypatch.delenv("GROQ_API_KEY_HISTORICAL_3", raising=False)
+
+        keys_seen = []
+
+        def fake_analyse(news, events, pair, technical=None, macro_context_snapshot=None):
+            keys_seen.append(os.environ.get("GROQ_API_KEY"))
+            if os.environ.get("GROQ_API_KEY") == "gkey-1":
+                return {**FAKE_AI_RESULT, "status": "failed", "error": "Rate limit reached for model, please retry"}
+            return dict(FAKE_AI_RESULT)
+
+        monkeypatch.setattr(bhac, "analyse_ai", fake_analyse)
+        state_path = tmp_path / "state.json"
+
+        stats = bhac.build_historical_ai_cache(
+            "EUR/USD",
+            datetime(2023, 1, 1, tzinfo=timezone.utc),
+            datetime(2023, 1, 2, tzinfo=timezone.utc),
+            candle_provider="import",
+            state_path=state_path,
+        )
+
+        assert keys_seen == ["gkey-1", "gkey-2"]  # gkey-1 esgotada, roda para gkey-2
+        assert stats["calls_made"] == 1
+        assert stats["failed"] == 0
+        assert stats["keys_exhausted"] == 1
+        assert stats["days_processed"] == 1
+
+    def test_all_groq_keys_exhausted_stops_gracefully_without_advancing_state(self, memory_db, monkeypatch, tmp_path):
+        _seed_candles(memory_db, days=5)
+        monkeypatch.setenv("GROQ_API_KEY_HISTORICAL", "gkey-1")
+        monkeypatch.setenv("GROQ_API_KEY_HISTORICAL_2", "gkey-2")
+        monkeypatch.delenv("GROQ_API_KEY_HISTORICAL_3", raising=False)
+
+        def fake_analyse(news, events, pair, technical=None, macro_context_snapshot=None):
+            return {**FAKE_AI_RESULT, "status": "failed", "error": "rate limit exceeded, quota used up"}
+
+        monkeypatch.setattr(bhac, "analyse_ai", fake_analyse)
+        state_path = tmp_path / "state.json"
+
+        stats = bhac.build_historical_ai_cache(
+            "EUR/USD",
+            datetime(2023, 1, 1, tzinfo=timezone.utc),
+            datetime(2023, 1, 2, tzinfo=timezone.utc),
+            candle_provider="import",
+            state_path=state_path,
+        )
+
+        assert stats["days_processed"] == 0
+        assert stats["keys_exhausted"] == 2
+        assert not state_path.exists() or json.loads(state_path.read_text()).get("last_day") is None
+
+    def test_non_rate_limit_failure_does_not_rotate_keys(self, memory_db, monkeypatch, tmp_path):
+        _seed_candles(memory_db, days=5)
+        monkeypatch.setenv("GROQ_API_KEY_HISTORICAL", "gkey-1")
+        monkeypatch.setenv("GROQ_API_KEY_HISTORICAL_2", "gkey-2")
+        monkeypatch.delenv("GROQ_API_KEY_HISTORICAL_3", raising=False)
+
+        calls = []
+
+        def fake_analyse(news, events, pair, technical=None, macro_context_snapshot=None):
+            calls.append(os.environ.get("GROQ_API_KEY"))
+            return {**FAKE_AI_RESULT, "status": "failed", "error": "resposta não é JSON válido"}
+
+        monkeypatch.setattr(bhac, "analyse_ai", fake_analyse)
+        state_path = tmp_path / "state.json"
+
+        stats = bhac.build_historical_ai_cache(
+            "EUR/USD",
+            datetime(2023, 1, 1, tzinfo=timezone.utc),
+            datetime(2023, 1, 2, tzinfo=timezone.utc),
+            candle_provider="import",
+            state_path=state_path,
+        )
+
+        assert calls == ["gkey-1"]  # não rodou — falha não é de quota
+        assert stats["failed"] == 1
+        assert stats["keys_exhausted"] == 0
     def test_respects_token_budget(self, memory_db, monkeypatch, tmp_path):
         _seed_candles(memory_db, days=10)
 
