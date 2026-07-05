@@ -17,12 +17,20 @@ novas (dedup por input_hash).
 Tem orçamento de tokens/dia (Groq free tier: 100k/dia) e pára quando o
 estima esgotado — corre-se uma vez por dia até completar o intervalo.
 
+Se correres isto no mesmo servidor/conta onde o `main.py` ao vivo já
+consome a mesma quota Groq, define `GROQ_API_KEY_HISTORICAL` no `.env`
+com uma chave *diferente* — este script troca-a para `GROQ_API_KEY` só
+no seu próprio processo (nunca mexe em `modules/ai_analyst.py`, nem
+afecta o processo separado do live), evitando que a Fase B e o ciclo
+live disputem a mesma quota diária.
+
 Uso:
     python scripts/build_historical_ai_cache.py --pair EUR/USD --from 2023-01-01 --to 2025-12-31
 """
 
 import argparse
 import hashlib
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -33,6 +41,9 @@ if str(ROOT) not in sys.path:
 
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv()
+
+if os.getenv("GROQ_API_KEY_HISTORICAL"):
+    os.environ["GROQ_API_KEY"] = os.environ["GROQ_API_KEY_HISTORICAL"]
 
 import backtest_runner as br  # noqa: E402
 from modules import database  # noqa: E402
