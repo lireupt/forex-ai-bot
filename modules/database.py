@@ -283,6 +283,7 @@ def init_db(conn):
     _ensure_ai_analysis_columns(conn)
     _ensure_decisions_columns(conn)
     _ensure_paper_trades_columns(conn)
+    _ensure_backtest_decisions_columns(conn)
     conn.commit()
 
 
@@ -409,6 +410,11 @@ def _ensure_decisions_columns(conn):
         "news_score": "REAL",
         "news_score_basis": "TEXT",
         "num_articles": "INTEGER",
+        # Padrões de candlestick (Camada 4, shadow — peso 0 por omissão)
+        "pattern_score": "REAL",
+        "pattern_names": "TEXT",
+        "pattern_reason": "TEXT",
+        "pattern_d1_trend": "TEXT",
     }
     for name, column_type in columns.items():
         if name not in existing:
@@ -450,6 +456,25 @@ def _ensure_paper_trades_columns(conn):
     for name, column_type in columns.items():
         if name not in existing:
             conn.execute(f"ALTER TABLE paper_trades ADD COLUMN {name} {column_type}")
+
+
+def _ensure_backtest_decisions_columns(conn):
+    """`backtest_decisions` é criada com `CREATE TABLE IF NOT EXISTS`, que não
+    adiciona colunas a bases já existentes — segue o mesmo padrão aditivo de
+    `_ensure_decisions_columns` para as novas colunas de padrões de candlestick."""
+    existing = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(backtest_decisions)").fetchall()
+    }
+    columns = {
+        "pattern_score": "REAL",
+        "pattern_names": "TEXT",
+        "pattern_reason": "TEXT",
+        "pattern_d1_trend": "TEXT",
+    }
+    for name, column_type in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE backtest_decisions ADD COLUMN {name} {column_type}")
 
 
 def _rows_to_dicts(rows):
@@ -713,6 +738,12 @@ def save_decision(conn, entry):
     else:
         gate_diagnostics_json = gate_diagnostics
 
+    pattern_names = entry.get("pattern_names")
+    if isinstance(pattern_names, (dict, list)):
+        pattern_names_json = json.dumps(pattern_names, ensure_ascii=False)
+    else:
+        pattern_names_json = pattern_names
+
     cursor = conn.execute(
         """
         INSERT INTO decisions
@@ -739,8 +770,9 @@ def save_decision(conn, entry):
          operational_can_trade, operational_block_reason,
          macro_risk_level, macro_block, macro_event_title, macro_event_currency,
          macro_event_time, macro_minutes_distance, macro_reason,
-         macro_context_snapshot_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         macro_context_snapshot_json,
+         pattern_score, pattern_names, pattern_reason, pattern_d1_trend, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             entry["timestamp"],
@@ -834,6 +866,10 @@ def save_decision(conn, entry):
             json.dumps(entry.get("macro_context_snapshot"), ensure_ascii=False)
             if entry.get("macro_context_snapshot") is not None
             else None,
+            entry.get("pattern_score"),
+            pattern_names_json,
+            entry.get("pattern_reason"),
+            entry.get("pattern_d1_trend"),
             utc_now(),
         ),
     )
@@ -2192,12 +2228,19 @@ def get_backtest_run(conn, run_id):
 
 
 def save_backtest_decision(conn, run_id, candle_time, decision_fields):
+    pattern_names = decision_fields.get("pattern_names")
+    if isinstance(pattern_names, (dict, list)):
+        pattern_names_json = json.dumps(pattern_names, ensure_ascii=False)
+    else:
+        pattern_names_json = pattern_names
+
     conn.execute(
         """
         INSERT INTO backtest_decisions
         (run_id, candle_time, signal, confidence, combined_score,
-         trade_allowed, block_reason, blocking_reason, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         trade_allowed, block_reason, blocking_reason,
+         pattern_score, pattern_names, pattern_reason, pattern_d1_trend, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -2208,6 +2251,10 @@ def save_backtest_decision(conn, run_id, candle_time, decision_fields):
             int(bool(decision_fields.get("trade_allowed"))),
             decision_fields.get("block_reason"),
             decision_fields.get("blocking_reason"),
+            decision_fields.get("pattern_score"),
+            pattern_names_json,
+            decision_fields.get("pattern_reason"),
+            decision_fields.get("pattern_d1_trend"),
             utc_now(),
         ),
     )

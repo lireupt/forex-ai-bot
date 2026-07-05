@@ -314,6 +314,10 @@ def _normalise(row, paper_trade_lookup=None):
         "news_score": _coerce_float(row.get("news_score")),
         "news_score_basis": row.get("news_score_basis") or "",
         "num_articles": row.get("num_articles"),
+        "pattern_score": _coerce_float(row.get("pattern_score")),
+        "pattern_names": _parse_json_list(row.get("pattern_names")),
+        "pattern_reason": row.get("pattern_reason") or "",
+        "pattern_d1_trend": row.get("pattern_d1_trend") or "",
     }
 
 

@@ -1892,6 +1892,12 @@
         ["ADX", fmtN(d.adx_value,1)],
         ["Razão técnica", esc(d.technical_reason)],
       ])}</div>
+      <div class="modal-section"><h4>Padrões (shadow)</h4>${buildKv([
+        ["Score", d.pattern_score != null ? `${scoreBar(d.pattern_score)}` : "—"],
+        ["Padrões detectados", (d.pattern_names && d.pattern_names.length) ? esc(d.pattern_names.join(", ")) : "—"],
+        ["Tendência D1", esc(d.pattern_d1_trend || "")],
+        ["Razão", esc(d.pattern_reason)],
+      ])}</div>
       <div class="modal-section"><h4>Decisão Final</h4>${buildKv([
         ["Combinado", `${pill(d.combined_signal)} ${scoreBar(d.combined_score)}`],
         ["Gating signal", `${pill(d.gating_signal||d.combined_signal)} (${d.gating_confidence??d.confidence??0}%)`],

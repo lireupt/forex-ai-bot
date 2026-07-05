@@ -240,6 +240,75 @@ class TestCombineScoresThreeComponents:
         assert -1.0 <= result3 <= 1.0
 
 
+class TestCombineScoresWithPatternComponent:
+    """Padrões de candlestick (Camada 4, shadow) — SCORE_PATTERN_WEIGHT default 0.0."""
+
+    _COMBINED_CONFIG = {
+        "buy_threshold": 0.35,
+        "sell_threshold": -0.35,
+        "ai_weight": 0.30,
+        "technical_weight": 0.55,
+        "news_weight": 0.15,
+        "shadow_weight": 0.0,
+    }
+
+    def test_pattern_weight_zero_is_bit_identical_to_no_pattern_regression(self):
+        """SCORE_PATTERN_WEIGHT=0.0 (default, config sem a chave `pattern_weight`)
+        tem de produzir exactamente o mesmo combined_score que sem a 4ª
+        componente — mesmo com um pattern_score elevado passado ao caller."""
+        without_pattern = scoring.combine_scores(
+            1.0, 0.0, news_score=-1.0, config=self._COMBINED_CONFIG,
+        )
+        with_pattern_but_zero_weight = scoring.combine_scores(
+            1.0, 0.0, news_score=-1.0, pattern_score=0.9, config=self._COMBINED_CONFIG,
+        )
+        assert with_pattern_but_zero_weight == without_pattern
+        assert with_pattern_but_zero_weight == pytest.approx(0.15)
+
+    def test_default_config_has_zero_pattern_weight(self):
+        config = scoring.load_combined_scoring_config()
+        assert config["pattern_weight"] == 0.0
+
+    def test_env_override_sets_pattern_weight(self, monkeypatch):
+        monkeypatch.setenv("SCORE_PATTERN_WEIGHT", "0.10")
+        config = scoring.load_combined_scoring_config()
+        assert config["pattern_weight"] == pytest.approx(0.10)
+
+    def test_pattern_weight_renormalizes_proportionally(self):
+        """Com pattern_weight > 0, o total_weight cresce e cada componente
+        perde peso relativo proporcionalmente — sem renormalização manual."""
+        config = dict(self._COMBINED_CONFIG)
+        config["pattern_weight"] = 0.10
+        ai, tech, news, pattern = 1.0, 0.5, 0.5, 0.8
+        result = scoring.combine_scores(
+            ai, tech, news_score=news, pattern_score=pattern, config=config,
+        )
+        total_w = 0.30 + 0.55 + 0.15 + 0.10
+        expected = (ai * 0.30 + tech * 0.55 + news * 0.15 + pattern * 0.10) / total_w
+        assert result == pytest.approx(expected, abs=1e-4)
+
+    def test_pattern_weight_interacts_with_ai_abstention(self):
+        """Quando a IA abstém (ai_score=None), pattern_score continua a
+        participar na renormalização das restantes componentes activas."""
+        config = dict(self._COMBINED_CONFIG)
+        config["pattern_weight"] = 0.10
+        tech, news, pattern = 0.4, 0.2, 0.6
+        result = scoring.combine_scores(
+            None, tech, news_score=news, pattern_score=pattern, config=config,
+        )
+        total_w = 0.55 + 0.15 + 0.10
+        expected = (tech * 0.55 + news * 0.15 + pattern * 0.10) / total_w
+        assert result == pytest.approx(expected, abs=1e-4)
+
+    def test_pattern_score_none_excluded_even_with_positive_weight(self):
+        config = dict(self._COMBINED_CONFIG)
+        config["pattern_weight"] = 0.10
+        result = scoring.combine_scores(
+            None, 0.6, news_score=None, pattern_score=None, config=config,
+        )
+        assert result == pytest.approx(0.6)
+
+
 class TestScoreToSignalWithCombinedConfig:
     """Bug 4: score_to_signal deve respeitar COMBINED_BUY/SELL_THRESHOLD."""
 

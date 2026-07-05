@@ -711,6 +711,7 @@ def _build_decision_entry(
     gating_signal=None,
     gating_confidence=None,
     operational_state=None,
+    pattern_result=None,
 ):
     indicators = technical_result.get("indicators", {})
     details = _technical_details(technical_result)
@@ -839,6 +840,11 @@ def _build_decision_entry(
         # partir do log sem reverse-engineering.
         "ai_vote_status": combined.get("ai_vote_status", ""),
         "effective_weights": combined.get("effective_weights", {}),
+        # Padrões de candlestick (Camada 4, shadow — peso 0 por omissão).
+        "pattern_score": (pattern_result.pattern_score if pattern_result else None),
+        "pattern_names": (pattern_result.pattern_names if pattern_result else None),
+        "pattern_reason": (pattern_result.pattern_reason if pattern_result else None),
+        "pattern_d1_trend": (pattern_result.d1_trend if pattern_result else None),
     }
 
 
@@ -1575,6 +1581,7 @@ def main():
         gating_signal=gating_combined.get("signal"),
         gating_confidence=gating_combined.get("confidence"),
         operational_state=op_state,
+        pattern_result=decision.pattern_result,
     )
     decision_entry["is_duplicate"] = is_duplicate
     decision_entry["news_score"] = news_score_value

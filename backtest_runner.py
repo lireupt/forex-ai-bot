@@ -45,7 +45,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from modules import database, decision_engine  # noqa: E402
+from modules import database, decision_engine, scoring  # noqa: E402
 from modules.pair_spec import get_pair_spec  # noqa: E402
 from modules.trade_simulator import simulate_trade  # noqa: E402
 
@@ -226,6 +226,14 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None, ai_result_
         expiry_bars = int(float(os.getenv("PAPER_TRADE_EXPIRY_BARS")))
     candle_provider = config.get("candle_provider")
 
+    # `pattern_weight`, se dado via --config, sobrepõe SCORE_PATTERN_WEIGHT
+    # (env) só para esta corrida — ponto de entrada para sweeps do peso da
+    # componente de padrões de candlestick sem tocar no ambiente global.
+    scoring_config = scoring.load_combined_scoring_config()
+    if config.get("pattern_weight") is not None:
+        scoring_config = dict(scoring_config)
+        scoring_config["pattern_weight"] = float(config["pattern_weight"])
+
     if db_path:
         database.DB_PATH = Path(db_path)
     conn = database.connect()
@@ -244,7 +252,7 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None, ai_result_
     full_config = {
         "pair": pair, "timeframe": timeframe, "gating_mode": gating_mode,
         "apply_spread": apply_spread, "sl_mult": sl_mult, "tp_mult": tp_mult,
-        "expiry_bars": expiry_bars,
+        "expiry_bars": expiry_bars, "pattern_weight": scoring_config["pattern_weight"],
     }
     full_config.update(config)
     database.create_backtest_run(conn, run_id, pair, date_from, date_to, full_config)
@@ -309,6 +317,7 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None, ai_result_
             expiry_bars=expiry_bars,
             source="backtest",
             operational_now=t,
+            scoring_config=scoring_config,
         )
         decision = decision_engine.decide(ctx)
         total_decisions += 1
@@ -320,6 +329,10 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None, ai_result_
             "trade_allowed": decision.trade_allowed,
             "block_reason": decision.trade_decision.get("block_reason"),
             "blocking_reason": decision.blocking_reason,
+            "pattern_score": decision.pattern_result.pattern_score,
+            "pattern_names": decision.pattern_result.pattern_names,
+            "pattern_reason": decision.pattern_result.pattern_reason,
+            "pattern_d1_trend": decision.pattern_result.d1_trend,
         })
         state.decisions.append({
             "gating_signal": decision.signal,
@@ -376,7 +389,7 @@ def main():
     parser.add_argument("--to", dest="date_to", required=True)
     parser.add_argument(
         "--config", default=None,
-        help="JSON com overrides (gating_mode, apply_spread, sl_mult, tp_mult, expiry_bars, timeframe, candle_provider).",
+        help="JSON com overrides (gating_mode, apply_spread, sl_mult, tp_mult, expiry_bars, timeframe, candle_provider, pattern_weight).",
     )
     parser.add_argument(
         "--candle-provider", default=None,
