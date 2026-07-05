@@ -109,8 +109,14 @@ class TestIsWeeklyPrepDue:
         too_early = datetime(2026, 6, 7, 19, 59, tzinfo=timezone.utc)
         assert is_weekly_prep_due(now_utc=too_early, conn=None) is False
 
-    def test_not_due_if_already_ran_today(self, memory_db):
-        # Insere um registo de hoje
+    def test_not_due_if_already_ran_today(self, memory_db, monkeypatch):
+        # `save_weekly_market_prep` carimba `created_at` com `database.utc_now()`
+        # (hora real da máquina) — sem isto, o teste dependia de o dia real de
+        # execução coincidir com o dia fixo de SUNDAY_AT_PREP (2026-06-07), o
+        # que deixou de ser verdade passado esse dia. Fixamos "agora" ao
+        # instante simulado para tornar o "já correu hoje" determinístico.
+        monkeypatch.setattr(database, "utc_now", lambda: SUNDAY_AT_PREP.isoformat())
+        # Insere um registo de "hoje" (= SUNDAY_AT_PREP, simulado acima)
         prep_result = {
             "pair": "EUR/USD",
             "macro_bias": "neutral",

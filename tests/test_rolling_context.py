@@ -479,6 +479,16 @@ class TestRollingContextDisabled:
             "ROLLING_CONTEXT_ENABLED": True,
             "ROLLING_CONTEXT_UPDATE_EVERY_CYCLE": False,
         }.get(name, default))
+        # `_should_update_rolling_context` usa `datetime.now(timezone.utc)`
+        # internamente (não aceita `now_utc` injectado) e a sua regra nº1 é
+        # "sem contexto anterior -> actualizar sempre" — como `memory_db` é
+        # sempre uma DB nova, essa regra disparava incondicionalmente e o
+        # "skip" nunca era exercitado, independentemente da hora real. O que
+        # este teste quer verificar é apenas o *gating* em `_run_rolling_context`
+        # (chama `_should_update_rolling_context` e respeita o resultado) — não
+        # a lógica de "é a altura certa" dessa função, que não é o alvo aqui.
+        # Fixamos o resultado directamente para tornar o teste determinístico.
+        monkeypatch.setattr(main_module, "_should_update_rolling_context", lambda conn: False)
 
         result = main_module._run_rolling_context(
             memory_db, {}, {}, {}, {}, {}, {}, {}, {}, "score", None
