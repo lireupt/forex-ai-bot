@@ -110,8 +110,11 @@ def _article_to_news_item(article):
 def import_historical_news(
     pair, date_from, date_to, api_key,
     state_path=DEFAULT_STATE_PATH, daily_budget=DEFAULT_DAILY_REQUEST_BUDGET,
-    sleep_seconds=REQUEST_INTERVAL_SECONDS,
+    sleep_seconds=REQUEST_INTERVAL_SECONDS, db_path=None,
 ):
+    if db_path:
+        database.DB_PATH = Path(db_path)
+
     state = _load_state(state_path)
     windows = _monthly_windows(date_from, date_to)
 
@@ -167,6 +170,7 @@ def main():
     parser.add_argument("--to", dest="date_to", required=True)
     parser.add_argument("--state-file", default=str(DEFAULT_STATE_PATH))
     parser.add_argument("--daily-budget", type=int, default=DEFAULT_DAILY_REQUEST_BUDGET)
+    parser.add_argument("--db", default=None, help="SQLite alternativo (isolar do forex_bot.db de produção).")
     args = parser.parse_args()
 
     api_key = os.getenv("ALPHA_VANTAGE_KEY")
@@ -176,7 +180,7 @@ def main():
 
     stats = import_historical_news(
         args.pair, _to_utc(args.date_from), _to_utc(args.date_to), api_key,
-        state_path=Path(args.state_file), daily_budget=args.daily_budget,
+        state_path=Path(args.state_file), daily_budget=args.daily_budget, db_path=args.db,
     )
     print(
         f"[import_historical_news] {stats['requests_made']} pedidos, "

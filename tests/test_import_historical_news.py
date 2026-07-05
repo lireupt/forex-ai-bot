@@ -153,3 +153,27 @@ class TestImportHistoricalNews:
         )
         assert stats["requests_made"] == 0
         assert stats["months_remaining"] == 0
+
+    def test_db_path_override_writes_to_alternate_file(self, memory_db, monkeypatch, tmp_path):
+        from modules import database
+
+        def fake_fetch(api_key, time_from, time_to, limit=1000):
+            return [_article(time_published=f"{time_from[:8]}T120000")]
+
+        monkeypatch.setattr(ihn, "_fetch_window", fake_fetch)
+        alt_db = tmp_path / "isolated.db"
+
+        ihn.import_historical_news(
+            "EUR/USD",
+            datetime(2023, 1, 1, tzinfo=timezone.utc),
+            datetime(2023, 2, 1, tzinfo=timezone.utc),
+            api_key="fake-key",
+            state_path=tmp_path / "state.json",
+            daily_budget=10,
+            sleep_seconds=0,
+            db_path=str(alt_db),
+        )
+
+        assert alt_db.exists()
+        rows = memory_db.execute("SELECT COUNT(*) AS n FROM news_items").fetchone()
+        assert rows["n"] == 0  # nada foi escrito na DB de produção/teste
