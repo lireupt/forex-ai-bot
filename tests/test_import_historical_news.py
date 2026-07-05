@@ -55,6 +55,44 @@ class TestIsRelevant:
         assert ihn._is_relevant(_article(title="Local sports team wins", summary="Great game")) is False
 
 
+class TestLoadApiKeys:
+    def test_no_key_configured_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("ALPHA_VANTAGE_KEY_HISTORICAL", raising=False)
+        for i in range(2, 6):
+            monkeypatch.delenv(f"ALPHA_VANTAGE_KEY_HISTORICAL_{i}", raising=False)
+        assert ihn._load_api_keys() == []
+
+    def test_single_key(self, monkeypatch):
+        monkeypatch.setenv("ALPHA_VANTAGE_KEY_HISTORICAL", "key-1")
+        monkeypatch.delenv("ALPHA_VANTAGE_KEY_HISTORICAL_2", raising=False)
+        assert ihn._load_api_keys() == ["key-1"]
+
+    def test_loads_five_sequential_keys(self, monkeypatch):
+        monkeypatch.setenv("ALPHA_VANTAGE_KEY_HISTORICAL", "key-1")
+        for i in range(2, 6):
+            monkeypatch.setenv(f"ALPHA_VANTAGE_KEY_HISTORICAL_{i}", f"key-{i}")
+        monkeypatch.delenv("ALPHA_VANTAGE_KEY_HISTORICAL_6", raising=False)
+
+        assert ihn._load_api_keys() == ["key-1", "key-2", "key-3", "key-4", "key-5"]
+
+    def test_stops_at_first_gap(self, monkeypatch):
+        monkeypatch.setenv("ALPHA_VANTAGE_KEY_HISTORICAL", "key-1")
+        monkeypatch.setenv("ALPHA_VANTAGE_KEY_HISTORICAL_2", "key-2")
+        monkeypatch.delenv("ALPHA_VANTAGE_KEY_HISTORICAL_3", raising=False)
+        monkeypatch.setenv("ALPHA_VANTAGE_KEY_HISTORICAL_4", "key-4")  # ignorada — há um buraco em _3
+
+        assert ihn._load_api_keys() == ["key-1", "key-2"]
+
+    def test_placeholder_treated_as_unset(self, monkeypatch):
+        monkeypatch.setenv("ALPHA_VANTAGE_KEY_HISTORICAL", "PLACEHOLDER")
+        assert ihn._load_api_keys() == []
+
+    def test_never_reads_live_alpha_vantage_key(self, monkeypatch):
+        monkeypatch.delenv("ALPHA_VANTAGE_KEY_HISTORICAL", raising=False)
+        monkeypatch.setenv("ALPHA_VANTAGE_KEY", "live-key-used-by-daily-bot")
+        assert ihn._load_api_keys() == []
+
+
 class TestImportHistoricalNews:
     def test_respects_daily_budget_and_saves_state(self, memory_db, monkeypatch, tmp_path):
         from modules import database

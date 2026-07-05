@@ -82,14 +82,19 @@ IA históricas, construídas em dois passos **retomáveis** (cada um tem
 limite de quota diária — corre-se uma vez por dia até completar):
 
 **1. Importar notícias históricas** (Alpha Vantage `NEWS_SENTIMENT`,
-tier grátis: 25 pedidos/dia):
+tier grátis: 25 pedidos/dia por chave). Usa chaves dedicadas via
+`ALPHA_VANTAGE_KEY_HISTORICAL` (+ `_2`, `_3`, ... quantas quiseres,
+sequenciais) — nunca a `ALPHA_VANTAGE_KEY` do bot ao vivo, para não
+competir pela mesma quota:
 
 ```bash
 venv/bin/python scripts/import_historical_news.py --pair EUR/USD --from 2023-01-01 --to 2025-12-31
 ```
 
 **2. Construir o cache diário de IA** (Groq tier grátis: 100k tokens/dia
-≈ ~65 chamadas/dia; usa `ai_analyses`, a mesma tabela de cache do live):
+≈ ~25 chamadas/dia a ~3500 tokens/chamada; usa `ai_analyses`, a mesma
+tabela de cache do live). Define `GROQ_API_KEY_HISTORICAL` para usar uma
+conta dedicada, distinta da `GROQ_API_KEY` do bot ao vivo:
 
 ```bash
 venv/bin/python scripts/build_historical_ai_cache.py --pair EUR/USD --from 2023-01-01 --to 2025-12-31

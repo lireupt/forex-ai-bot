@@ -7,9 +7,15 @@ guarda o progresso num ficheiro de estado JSON e, em cada execução, só
 pede os meses ainda não descarregados, até ao orçamento diário
 configurado. Corre-se uma vez por dia até `months_remaining` chegar a 0.
 
-Suporta uma segunda chave via `ALPHA_VANTAGE_KEY_2` — os pedidos
-alternam entre as chaves disponíveis (round-robin), duplicando o
-orçamento diário efectivo (2 × 20 = 40 pedidos/dia, com margem).
+Usa chaves **dedicadas** a este importador, via `ALPHA_VANTAGE_KEY_HISTORICAL`
+(+ `ALPHA_VANTAGE_KEY_HISTORICAL_2`, `_3`, ... quantas forem definidas,
+sequenciais) — nunca a `ALPHA_VANTAGE_KEY` do bot ao vivo
+(`modules/api_sources.py`), para não competir pela mesma quota diária.
+Os pedidos alternam entre as chaves disponíveis (round-robin),
+multiplicando o orçamento diário efectivo (N × 20, com margem). Se uma
+chave sinalizar limite de quota atingido, o importador roda para a
+seguinte automaticamente e só pára (preservando o progresso) quando
+todas as chaves estiverem esgotadas por hoje.
 
 `tickers=FOREX:EUR` não devolve dados históricos de forma fiável no tier
 gratuito (testado); usa-se antes `topics` (macro/monetário/fiscal/
@@ -213,12 +219,26 @@ def _to_utc(date_str):
     return dt.astimezone(timezone.utc)
 
 
+HISTORICAL_KEY_ENV_PREFIX = "ALPHA_VANTAGE_KEY_HISTORICAL"
+
+
 def _load_api_keys():
+    """Lê chaves dedicadas à Fase B: `ALPHA_VANTAGE_KEY_HISTORICAL`,
+    `ALPHA_VANTAGE_KEY_HISTORICAL_2`, `_3`, ... (tantas quantas existirem,
+    sequenciais). Nunca lê `ALPHA_VANTAGE_KEY` — essa é a chave do bot ao
+    vivo (`modules/api_sources.py`) e não deve competir pela mesma quota
+    diária com este importador."""
     keys = []
-    for env_name in ("ALPHA_VANTAGE_KEY", "ALPHA_VANTAGE_KEY_2"):
-        value = os.getenv(env_name)
-        if value and value != "PLACEHOLDER":
-            keys.append(value)
+    value = os.getenv(HISTORICAL_KEY_ENV_PREFIX)
+    if value and value != "PLACEHOLDER":
+        keys.append(value)
+    i = 2
+    while True:
+        value = os.getenv(f"{HISTORICAL_KEY_ENV_PREFIX}_{i}")
+        if not value or value == "PLACEHOLDER":
+            break
+        keys.append(value)
+        i += 1
     return keys
 
 
@@ -234,10 +254,13 @@ def main():
 
     api_keys = _load_api_keys()
     if not api_keys:
-        print("[import_historical_news] ALPHA_VANTAGE_KEY não configurada.", file=sys.stderr)
+        print(
+            "[import_historical_news] nenhuma ALPHA_VANTAGE_KEY_HISTORICAL configurada.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     if len(api_keys) > 1:
-        print(f"[import_historical_news] {len(api_keys)} chaves Alpha Vantage detectadas — a alternar entre elas.")
+        print(f"[import_historical_news] {len(api_keys)} chaves Alpha Vantage (histórico) detectadas — a alternar entre elas.")
 
     stats = import_historical_news(
         args.pair, _to_utc(args.date_from), _to_utc(args.date_to), api_keys,
