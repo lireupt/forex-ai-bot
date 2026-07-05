@@ -1,4 +1,5 @@
-"""Runner de backtest — Fase A (sem replay de IA, ai_score=0).
+"""Runner de backtest — Fase A (sem IA, ai_score=0) e Fase B (--use-historical-ai,
+replay do cache diário de IA histórica real).
 
 Corre candle a candle sobre o histórico já importado em `market_candles`
 (ver `scripts/import_history.py`), construindo a cada passo `t` um
@@ -13,15 +14,20 @@ Nunca escreve nas tabelas de produção (`paper_trades`, `decisions`) — só em
 `backtest_runs` / `backtest_decisions` / `backtest_trades`, isoladas por
 `run_id`.
 
-A componente IA fica desligada nesta fase (`ai_result=None` ->
-`decision_engine.DEFAULT_AI_RESULT`, ai_score efectivamente 0). O ponto de
-injeção para a Fase B (replay de IA com scores históricos reais) é o
-parâmetro `ai_result` do `MarketContext` — ver `run_backtest()`.
+Por omissão a componente IA fica desligada (`ai_result=None` ->
+`decision_engine.DEFAULT_AI_RESULT`, ai_score efectivamente 0) — Fase A,
+"só técnico". `--use-historical-ai` liga a Fase B: injeta o cache diário
+de IA histórica real construído por `scripts/build_historical_ai_cache.py`
+(tabela `ai_analyses`), via `build_historical_ai_result_provider()`. Dias
+sem cache ainda construído continuam com ai_score=0 (fallback da Fase A),
+nunca uma fuga de futuro.
 
 Uso:
     python backtest_runner.py --pair EUR/USD --from 2024-01-01 --to 2026-06-30
     python backtest_runner.py --pair EUR/USD --from 2024-01-01 --to 2026-06-30 \
         --config overrides.json
+    python backtest_runner.py --pair EUR/USD --from 2023-01-01 --to 2025-12-31 \
+        --db data/fase_b_history.db --use-historical-ai
 """
 
 import argparse
@@ -135,6 +141,37 @@ class HistoricalProvider:
         # Mesmos eventos, formato ff_calendar — usado por
         # get_macro_risk()/ai_analyst (ctx.events).
         return self._macro_events
+
+
+def _as_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    return decision_engine.parse_dt(value).date()
+
+
+def build_historical_ai_result_provider(conn, pair, date_from, date_to, provider="groq"):
+    """candle_time_iso -> ai_result | None, a partir do cache diário de IA
+    histórica construído por `scripts/build_historical_ai_cache.py`
+    (tabela `ai_analyses`) — ponto de injecção real da Fase B em
+    `run_backtest(ai_result_provider=...)`. Um dia sem cache ainda
+    construído devolve None (decision_engine usa DEFAULT_AI_RESULT, tal
+    como na Fase A, ai_score efectivamente 0 para esse dia)."""
+    day = _as_date(date_from)
+    end = _as_date(date_to)
+
+    by_date = {}
+    while day <= end:
+        day_key = day.isoformat()
+        result = database.get_ai_analysis_for_date(conn, pair, day_key, provider)
+        if result is not None:
+            by_date[day_key] = result
+        day += timedelta(days=1)
+
+    def lookup(candle_time_iso):
+        day_key = decision_engine.parse_dt(candle_time_iso).date().isoformat()
+        return by_date.get(day_key)
+
+    return lookup
 
 
 class BacktestState:
@@ -350,14 +387,38 @@ def main():
         "--db", default=None,
         help="SQLite alternativo (default: mesma DB de produção, tabelas backtest_* isoladas).",
     )
+    parser.add_argument(
+        "--use-historical-ai", action="store_true",
+        help="Injeta o cache diário de IA histórica real (tabela ai_analyses, Fase B) "
+             "em vez de ai_score=0 (Fase A). Requer --db apontado para uma DB com o "
+             "cache já construído (scripts/build_historical_ai_cache.py).",
+    )
+    parser.add_argument(
+        "--ai-provider", default="groq",
+        help="Provider da IA cacheada a usar com --use-historical-ai (default: groq).",
+    )
     args = parser.parse_args()
 
     config = _load_config(args.config)
     if args.candle_provider:
         config["candle_provider"] = args.candle_provider
+
+    date_from = to_utc_iso(args.date_from)
+    date_to = to_utc_iso(args.date_to)
+
+    ai_result_provider = None
+    if args.use_historical_ai:
+        if args.db:
+            database.DB_PATH = Path(args.db)
+        conn = database.connect()
+        ai_result_provider = build_historical_ai_result_provider(
+            conn, args.pair, date_from, date_to, provider=args.ai_provider,
+        )
+        conn.close()
+
     stats = run_backtest(
-        args.pair, to_utc_iso(args.date_from), to_utc_iso(args.date_to),
-        config=config, db_path=args.db,
+        args.pair, date_from, date_to,
+        config=config, db_path=args.db, ai_result_provider=ai_result_provider,
     )
     print(f"[backtest_runner] run_id={stats['run_id']}")
     print(

@@ -461,3 +461,49 @@ class TestMarketCandles:
             provider="yahoo",
         )
         assert len(result) == 1
+
+
+def _make_ai_result(**overrides):
+    base = {
+        "signal": "BUY", "confidence": 70, "reasoning": "teste",
+        "risk_level": "medium", "hold_off": False, "provider": "groq",
+        "bias": "BUY", "confidence_adjustment": 0.3, "risk_adjustment": -0.1,
+        "macro_context": "calm", "volatility_context": "medium",
+        "news_sentiment": "positive", "reason": "teste",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestAiAnalysisForDate:
+    def test_returns_none_when_nothing_cached(self, memory_db):
+        assert database.get_ai_analysis_for_date(memory_db, "EUR/USD", "2023-01-05", "groq") is None
+
+    def test_ignores_input_hash_unlike_get_ai_analysis(self, memory_db):
+        database.save_ai_analysis(memory_db, "EUR/USD", "2023-01-05", "hash-abc", _make_ai_result())
+        memory_db.commit()
+
+        # get_ai_analysis exige o hash exacto
+        assert database.get_ai_analysis(memory_db, "EUR/USD", "2023-01-05", "hash-outro", "groq") is None
+        # get_ai_analysis_for_date não precisa do hash
+        result = database.get_ai_analysis_for_date(memory_db, "EUR/USD", "2023-01-05", "groq")
+        assert result is not None
+        assert result["signal"] == "BUY"
+        assert result["confidence_adjustment"] == 0.3
+
+    def test_filters_by_pair_date_and_provider(self, memory_db):
+        database.save_ai_analysis(memory_db, "EUR/USD", "2023-01-05", "h1", _make_ai_result(signal="BUY"))
+        database.save_ai_analysis(memory_db, "EUR/USD", "2023-01-06", "h2", _make_ai_result(signal="SELL"))
+        database.save_ai_analysis(memory_db, "GBP/USD", "2023-01-05", "h3", _make_ai_result(signal="NEUTRAL"))
+        memory_db.commit()
+
+        result = database.get_ai_analysis_for_date(memory_db, "EUR/USD", "2023-01-05", "groq")
+        assert result["signal"] == "BUY"
+
+    def test_returns_most_recent_when_multiple_rows_for_same_day(self, memory_db):
+        database.save_ai_analysis(memory_db, "EUR/USD", "2023-01-05", "h1", _make_ai_result(signal="BUY"))
+        database.save_ai_analysis(memory_db, "EUR/USD", "2023-01-05", "h2", _make_ai_result(signal="SELL"))
+        memory_db.commit()
+
+        result = database.get_ai_analysis_for_date(memory_db, "EUR/USD", "2023-01-05", "groq")
+        assert result["signal"] == "SELL"  # a última gravada (id mais alto)

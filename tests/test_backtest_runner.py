@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import backtest_runner as br
-from modules import database
+from modules import database, decision_engine
 
 
 def _synthetic_hourly_candles(n, start):
@@ -249,3 +249,101 @@ class TestHistoricalProviderCandleFilter:
         provider_unfiltered = br.HistoricalProvider(memory_db, "EUR/USD")
         rows_all = provider_unfiltered.driving_candles("1h", start.isoformat(), (start + timedelta(hours=20)).isoformat())
         assert len(rows_all) == 11  # sem filtro, vê as 10 "import" + 1 "yahoo" extra
+
+
+def _cached_ai_result(**overrides):
+    base = {
+        "signal": "BUY", "confidence": 80, "reasoning": "teste", "risk_level": "medium",
+        "hold_off": False, "provider": "groq", "bias": "BUY",
+        "confidence_adjustment": 0.4, "risk_adjustment": 0.0,
+    }
+    base.update(overrides)
+    return base
+
+
+class TestBuildHistoricalAiResultProvider:
+    def test_returns_cached_result_for_day_and_none_for_uncached_day(self, memory_db):
+        database.save_ai_analysis(memory_db, "EUR/USD", "2023-01-05", "h1", _cached_ai_result())
+        memory_db.commit()
+
+        lookup = br.build_historical_ai_result_provider(
+            memory_db, "EUR/USD",
+            datetime(2023, 1, 1, tzinfo=timezone.utc), datetime(2023, 1, 10, tzinfo=timezone.utc),
+            provider="groq",
+        )
+
+        result = lookup("2023-01-05T14:30:00+00:00")
+        assert result is not None
+        assert result["signal"] == "BUY"
+        assert result["confidence_adjustment"] == 0.4
+
+        assert lookup("2023-01-06T14:30:00+00:00") is None  # sem cache nesse dia
+
+    def test_accepts_string_date_bounds(self, memory_db):
+        database.save_ai_analysis(memory_db, "EUR/USD", "2023-01-05", "h1", _cached_ai_result(signal="SELL"))
+        memory_db.commit()
+
+        lookup = br.build_historical_ai_result_provider(
+            memory_db, "EUR/USD", "2023-01-01T00:00:00+00:00", "2023-01-10T00:00:00+00:00",
+        )
+        assert lookup("2023-01-05T08:00:00+00:00")["signal"] == "SELL"
+
+
+class TestRunBacktestWithHistoricalAi:
+    def test_injects_cached_ai_result_per_day_and_falls_back_to_default_when_missing(
+        self, memory_db, monkeypatch,
+    ):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        candles = _synthetic_hourly_candles(150, start)
+        database.save_market_candles(memory_db, candles, "EUR/USD", "1h", "import")
+
+        # hour 100 -> 2024-01-05T04:00, hour 130 -> 2024-01-06T10:00: a
+        # janela do backtest atravessa a fronteira do dia.
+        database.save_ai_analysis(memory_db, "EUR/USD", "2024-01-05", "h1", _cached_ai_result())
+        memory_db.commit()
+
+        seen_ai_results = {}
+        real_decide = decision_engine.decide
+
+        def spy_decide(ctx):
+            seen_ai_results.setdefault(ctx.now.date().isoformat(), ctx.ai_result)
+            return real_decide(ctx)
+
+        monkeypatch.setattr(br.decision_engine, "decide", spy_decide)
+
+        provider = br.build_historical_ai_result_provider(
+            memory_db, "EUR/USD",
+            start + timedelta(hours=100), start + timedelta(hours=130),
+            provider="groq",
+        )
+
+        date_from = (start + timedelta(hours=100)).isoformat()
+        date_to = (start + timedelta(hours=130)).isoformat()
+        br.run_backtest("EUR/USD", date_from, date_to, ai_result_provider=provider)
+
+        assert seen_ai_results["2024-01-05"]["signal"] == "BUY"
+        assert seen_ai_results["2024-01-05"]["confidence_adjustment"] == 0.4
+        # sem cache para este dia, ctx.ai_result fica None -> decide() usa
+        # DEFAULT_AI_RESULT internamente (fallback da Fase A).
+        assert seen_ai_results["2024-01-06"] is None
+
+    def test_without_provider_stays_fase_a_default(self, memory_db, monkeypatch):
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        candles = _synthetic_hourly_candles(150, start)
+        database.save_market_candles(memory_db, candles, "EUR/USD", "1h", "import")
+        memory_db.commit()
+
+        seen = []
+        real_decide = decision_engine.decide
+
+        def spy_decide(ctx):
+            seen.append(ctx.ai_result)
+            return real_decide(ctx)
+
+        monkeypatch.setattr(br.decision_engine, "decide", spy_decide)
+
+        date_from = (start + timedelta(hours=100)).isoformat()
+        date_to = (start + timedelta(hours=105)).isoformat()
+        br.run_backtest("EUR/USD", date_from, date_to)
+
+        assert all(r is None for r in seen)  # sem provider -> decide() usa DEFAULT_AI_RESULT

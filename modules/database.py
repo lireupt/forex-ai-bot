@@ -613,6 +613,19 @@ def get_recent_market_candles(conn, pair, timeframe, provider, since_iso, count)
     return candles
 
 
+def _normalise_ai_analysis_row(row):
+    result = dict(row)
+    result["hold_off"] = bool(result["hold_off"])
+    result["bias"] = result.get("bias") or result.get("signal") or "NEUTRAL"
+    result["confidence_adjustment"] = float(result.get("confidence_adjustment") or 0.0)
+    result["risk_adjustment"] = float(result.get("risk_adjustment") or 0.0)
+    result["macro_context"] = result.get("macro_context") or "cached_legacy"
+    result["volatility_context"] = result.get("volatility_context") or "medium"
+    result["news_sentiment"] = result.get("news_sentiment") or "neutral"
+    result["reason"] = result.get("context_reason") or result.get("reasoning") or ""
+    return result
+
+
 def get_ai_analysis(conn, pair, analysis_date, input_hash, provider):
     row = conn.execute(
         """
@@ -626,16 +639,30 @@ def get_ai_analysis(conn, pair, analysis_date, input_hash, provider):
     ).fetchone()
     if row is None:
         return None
-    result = dict(row)
-    result["hold_off"] = bool(result["hold_off"])
-    result["bias"] = result.get("bias") or result.get("signal") or "NEUTRAL"
-    result["confidence_adjustment"] = float(result.get("confidence_adjustment") or 0.0)
-    result["risk_adjustment"] = float(result.get("risk_adjustment") or 0.0)
-    result["macro_context"] = result.get("macro_context") or "cached_legacy"
-    result["volatility_context"] = result.get("volatility_context") or "medium"
-    result["news_sentiment"] = result.get("news_sentiment") or "neutral"
-    result["reason"] = result.get("context_reason") or result.get("reasoning") or ""
-    return result
+    return _normalise_ai_analysis_row(row)
+
+
+def get_ai_analysis_for_date(conn, pair, analysis_date, provider):
+    """Como `get_ai_analysis()`, mas ignora `input_hash` — devolve a análise
+    cacheada mais recente para (pair, analysis_date, provider). Usada pelo
+    replay histórico da Fase B (`backtest_runner.build_historical_ai_result_provider`),
+    que não recalcula o hash exacto usado na construção do cache (o backtest
+    percorre o histórico candle a candle, não dia a dia)."""
+    row = conn.execute(
+        """
+        SELECT signal, confidence, reasoning, risk_level, hold_off, provider,
+               bias, confidence_adjustment, risk_adjustment, macro_context,
+               volatility_context, news_sentiment, context_reason
+        FROM ai_analyses
+        WHERE pair = ? AND analysis_date = ? AND provider = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (pair, analysis_date, provider),
+    ).fetchone()
+    if row is None:
+        return None
+    return _normalise_ai_analysis_row(row)
 
 
 def save_ai_analysis(conn, pair, analysis_date, input_hash, result):
