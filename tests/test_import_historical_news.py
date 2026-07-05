@@ -72,7 +72,7 @@ class TestImportHistoricalNews:
             "EUR/USD",
             datetime(2023, 1, 1, tzinfo=timezone.utc),
             datetime(2023, 4, 1, tzinfo=timezone.utc),
-            api_key="fake-key",
+            api_keys="fake-key",
             state_path=state_path,
             daily_budget=2,
             sleep_seconds=0,
@@ -103,7 +103,7 @@ class TestImportHistoricalNews:
             "EUR/USD",
             datetime(2023, 1, 1, tzinfo=timezone.utc),
             datetime(2023, 4, 1, tzinfo=timezone.utc),
-            api_key="fake-key",
+            api_keys="fake-key",
             state_path=state_path,
             daily_budget=10,
             sleep_seconds=0,
@@ -111,6 +111,28 @@ class TestImportHistoricalNews:
 
         assert len(calls) == 1  # só março, jan/fev já feitos
         assert stats["months_remaining"] == 0
+
+    def test_alternates_between_multiple_keys_and_doubles_default_budget(self, memory_db, monkeypatch, tmp_path):
+        keys_used = []
+
+        def fake_fetch(api_key, time_from, time_to, limit=1000):
+            keys_used.append(api_key)
+            return [_article(time_published=f"{time_from[:8]}T120000")]
+
+        monkeypatch.setattr(ihn, "_fetch_window", fake_fetch)
+        state_path = tmp_path / "state.json"
+
+        stats = ihn.import_historical_news(
+            "EUR/USD",
+            datetime(2023, 1, 1, tzinfo=timezone.utc),
+            datetime(2023, 5, 1, tzinfo=timezone.utc),
+            api_keys=["key-a", "key-b"],
+            state_path=state_path,
+            sleep_seconds=0,
+        )
+
+        assert stats["requests_made"] == 4  # 4 meses, dentro do orçamento 2x20
+        assert keys_used == ["key-a", "key-b", "key-a", "key-b"]
 
     def test_filters_out_irrelevant_articles(self, memory_db, monkeypatch, tmp_path):
         def fake_fetch(api_key, time_from, time_to, limit=1000):
@@ -126,7 +148,7 @@ class TestImportHistoricalNews:
             "EUR/USD",
             datetime(2023, 1, 1, tzinfo=timezone.utc),
             datetime(2023, 2, 1, tzinfo=timezone.utc),
-            api_key="fake-key",
+            api_keys="fake-key",
             state_path=state_path,
             daily_budget=10,
             sleep_seconds=0,
@@ -146,7 +168,7 @@ class TestImportHistoricalNews:
             "EUR/USD",
             datetime(2023, 1, 1, tzinfo=timezone.utc),
             datetime(2023, 2, 1, tzinfo=timezone.utc),
-            api_key="fake-key",
+            api_keys="fake-key",
             state_path=state_path,
             daily_budget=10,
             sleep_seconds=0,
@@ -167,7 +189,7 @@ class TestImportHistoricalNews:
             "EUR/USD",
             datetime(2023, 1, 1, tzinfo=timezone.utc),
             datetime(2023, 2, 1, tzinfo=timezone.utc),
-            api_key="fake-key",
+            api_keys="fake-key",
             state_path=tmp_path / "state.json",
             daily_budget=10,
             sleep_seconds=0,

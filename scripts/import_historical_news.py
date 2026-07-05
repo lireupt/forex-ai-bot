@@ -1,11 +1,15 @@
 """Importador de notícias históricas via Alpha Vantage `NEWS_SENTIMENT`,
 para `news_items` — usado pela Fase B (replay de IA histórico).
 
-O tier gratuito do Alpha Vantage tem limite de 25 pedidos/dia. Este
-importador corre em blocos mensais e é **retomável**: guarda o progresso
-num ficheiro de estado JSON e, em cada execução, só pede os meses ainda
-não descarregados, até ao orçamento diário configurado. Corre-se uma vez
-por dia até `months_remaining` chegar a 0.
+O tier gratuito do Alpha Vantage tem limite de 25 pedidos/dia **por
+chave**. Este importador corre em blocos mensais e é **retomável**:
+guarda o progresso num ficheiro de estado JSON e, em cada execução, só
+pede os meses ainda não descarregados, até ao orçamento diário
+configurado. Corre-se uma vez por dia até `months_remaining` chegar a 0.
+
+Suporta uma segunda chave via `ALPHA_VANTAGE_KEY_2` — os pedidos
+alternam entre as chaves disponíveis (round-robin), duplicando o
+orçamento diário efectivo (2 × 20 = 40 pedidos/dia, com margem).
 
 `tickers=FOREX:EUR` não devolve dados históricos de forma fiável no tier
 gratuito (testado); usa-se antes `topics` (macro/monetário/fiscal/
@@ -40,7 +44,7 @@ from modules.news_scraper import EURUSD_KEYWORDS  # noqa: E402
 
 API_URL = "https://www.alphavantage.co/query"
 TOPICS = "economy_macro,economy_monetary,economy_fiscal,financial_markets"
-DEFAULT_DAILY_REQUEST_BUDGET = 20  # margem abaixo do limite grátis de 25/dia
+PER_KEY_DAILY_BUDGET = 20  # margem abaixo do limite grátis de 25/dia por chave
 REQUEST_INTERVAL_SECONDS = 15
 DEFAULT_STATE_PATH = ROOT / "data" / "historical_news_import_state.json"
 
@@ -108,10 +112,19 @@ def _article_to_news_item(article):
 
 
 def import_historical_news(
-    pair, date_from, date_to, api_key,
-    state_path=DEFAULT_STATE_PATH, daily_budget=DEFAULT_DAILY_REQUEST_BUDGET,
+    pair, date_from, date_to, api_keys,
+    state_path=DEFAULT_STATE_PATH, daily_budget=None,
     sleep_seconds=REQUEST_INTERVAL_SECONDS, db_path=None,
 ):
+    """`api_keys` aceita uma única chave (string) ou uma lista — com mais
+    de uma, os pedidos alternam entre elas (round-robin) e o orçamento
+    diário por omissão escala com o número de chaves
+    (`PER_KEY_DAILY_BUDGET` × len(api_keys))."""
+    if isinstance(api_keys, str):
+        api_keys = [api_keys]
+    if daily_budget is None:
+        daily_budget = PER_KEY_DAILY_BUDGET * len(api_keys)
+
     if db_path:
         database.DB_PATH = Path(db_path)
 
@@ -130,6 +143,7 @@ def import_historical_news(
         if requests_made >= daily_budget:
             break
 
+        api_key = api_keys[requests_made % len(api_keys)]
         feed = _fetch_window(api_key, start.strftime("%Y%m%dT%H%M"), end.strftime("%Y%m%dT%H%M"))
         requests_made += 1
 
@@ -163,23 +177,34 @@ def _to_utc(date_str):
     return dt.astimezone(timezone.utc)
 
 
+def _load_api_keys():
+    keys = []
+    for env_name in ("ALPHA_VANTAGE_KEY", "ALPHA_VANTAGE_KEY_2"):
+        value = os.getenv(env_name)
+        if value and value != "PLACEHOLDER":
+            keys.append(value)
+    return keys
+
+
 def main():
     parser = argparse.ArgumentParser(description="Importa notícias históricas via Alpha Vantage.")
     parser.add_argument("--pair", default="EUR/USD")
     parser.add_argument("--from", dest="date_from", required=True)
     parser.add_argument("--to", dest="date_to", required=True)
     parser.add_argument("--state-file", default=str(DEFAULT_STATE_PATH))
-    parser.add_argument("--daily-budget", type=int, default=DEFAULT_DAILY_REQUEST_BUDGET)
+    parser.add_argument("--daily-budget", type=int, default=None)
     parser.add_argument("--db", default=None, help="SQLite alternativo (isolar do forex_bot.db de produção).")
     args = parser.parse_args()
 
-    api_key = os.getenv("ALPHA_VANTAGE_KEY")
-    if not api_key or api_key == "PLACEHOLDER":
+    api_keys = _load_api_keys()
+    if not api_keys:
         print("[import_historical_news] ALPHA_VANTAGE_KEY não configurada.", file=sys.stderr)
         sys.exit(1)
+    if len(api_keys) > 1:
+        print(f"[import_historical_news] {len(api_keys)} chaves Alpha Vantage detectadas — a alternar entre elas.")
 
     stats = import_historical_news(
-        args.pair, _to_utc(args.date_from), _to_utc(args.date_to), api_key,
+        args.pair, _to_utc(args.date_from), _to_utc(args.date_to), api_keys,
         state_path=Path(args.state_file), daily_budget=args.daily_budget, db_path=args.db,
     )
     print(
