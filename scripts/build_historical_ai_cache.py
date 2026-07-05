@@ -15,7 +15,12 @@ se o ficheiro de estado se perder, dias já cacheados não geram chamadas
 novas (dedup por input_hash).
 
 Tem orçamento de tokens/dia (Groq free tier: 100k/dia) e pára quando o
-estima esgotado — corre-se uma vez por dia até completar o intervalo.
+estima esgotado — corre-se uma vez por dia até completar o intervalo. Se
+uma chamada falhar (ex.: quota real esgotada, mesmo com margem — o
+consumo real observado em produção é ~3300 tokens/chamada, não os 1500
+estimados inicialmente), o dia falhado **não avança no ficheiro de
+estado** — a próxima corrida tenta-o de novo, em vez de o saltar
+silenciosamente para sempre.
 
 Se correres isto no mesmo servidor/conta onde o `main.py` ao vivo já
 consome a mesma quota Groq, define `GROQ_API_KEY_HISTORICAL` no `.env`
@@ -53,7 +58,7 @@ from modules.macro_filter import get_macro_risk  # noqa: E402
 from modules.pair_spec import get_pair_spec  # noqa: E402
 
 DEFAULT_TOKEN_BUDGET = 90000  # margem abaixo do limite Groq free tier (100k/dia)
-ESTIMATED_TOKENS_PER_CALL = 1500  # estimativa conservadora (ver [ai-tokens] nos logs live)
+ESTIMATED_TOKENS_PER_CALL = 3500  # consumo real observado em produção (~3300/chamada, ver [ai-tokens] nos logs live)
 NEWS_LOOKBACK_HOURS = 72
 DEFAULT_STATE_PATH = ROOT / "data" / "historical_ai_cache_state.json"
 
@@ -149,10 +154,12 @@ def build_historical_ai_cache(
             break
 
         result, _input_hash, was_cached = build_day_analysis(conn, provider_name, pair, day, candle_provider)
+        if result.get("status") == "failed":
+            failed += 1
+            break  # não avança o estado — a próxima corrida tenta este dia de novo
+
         if was_cached:
             cached_hits += 1
-        elif result.get("status") == "failed":
-            failed += 1
         else:
             calls_made += 1
             tokens_used += ESTIMATED_TOKENS_PER_CALL

@@ -82,6 +82,11 @@ def _is_relevant(article):
     return any(kw.upper() in text for kw in EURUSD_KEYWORDS)
 
 
+class RateLimitError(RuntimeError):
+    """A chave atingiu a quota diária — não é um erro fatal, é sinal para
+    tentar outra chave ou parar graciosamente por hoje."""
+
+
 def _fetch_window(api_key, time_from, time_to, limit=1000):
     params = {
         "function": "NEWS_SENTIMENT",
@@ -95,9 +100,31 @@ def _fetch_window(api_key, time_from, time_to, limit=1000):
     response = requests.get(API_URL, params=params, timeout=30)
     response.raise_for_status()
     data = response.json()
+    if "Information" in data:
+        message = data["Information"]
+        if "rate limit" in message.lower() or "requests per day" in message.lower():
+            raise RateLimitError(message)
+        raise RuntimeError(f"Alpha Vantage: {message}")
     if "feed" not in data:
         raise RuntimeError(f"Alpha Vantage não devolveu 'feed': {data}")
     return data["feed"]
+
+
+def _fetch_with_rotation(api_keys, exhausted_keys, key_cursor, time_from, time_to):
+    """Tenta obter a janela, rodando para a chave seguinte disponível sempre
+    que uma bate no limite diário. Devolve (feed, novo_key_cursor); `feed` é
+    `None` se todas as chaves estiverem esgotadas (chamador deve parar sem
+    marcar o mês como concluído)."""
+    for _ in range(len(api_keys)):
+        key_index = key_cursor % len(api_keys)
+        if key_index not in exhausted_keys:
+            try:
+                feed = _fetch_window(api_keys[key_index], time_from, time_to)
+                return feed, key_cursor + 1
+            except RateLimitError:
+                exhausted_keys.add(key_index)
+        key_cursor += 1
+    return None, key_cursor
 
 
 def _article_to_news_item(article):
@@ -136,17 +163,25 @@ def import_historical_news(
 
     requests_made = 0
     imported_total = 0
+    exhausted_keys = set()
+    key_cursor = 0
     for start, end in windows:
         month_key = start.strftime("%Y-%m")
         if month_key in state.get("done", []):
             continue
         if requests_made >= daily_budget:
             break
+        if len(exhausted_keys) >= len(api_keys):
+            break  # todas as chaves esgotaram a quota diária — pára graciosamente
 
-        api_key = api_keys[requests_made % len(api_keys)]
-        feed = _fetch_window(api_key, start.strftime("%Y%m%dT%H%M"), end.strftime("%Y%m%dT%H%M"))
+        feed, key_cursor = _fetch_with_rotation(
+            api_keys, exhausted_keys, key_cursor,
+            start.strftime("%Y%m%dT%H%M"), end.strftime("%Y%m%dT%H%M"),
+        )
+        if feed is None:
+            break  # todas as chaves esgotadas — o mês não é marcado como feito
+
         requests_made += 1
-
         relevant = [a for a in feed if _is_relevant(a)]
         items = [_article_to_news_item(a) for a in relevant]
         database.save_news_items(conn, items, pair)
@@ -167,6 +202,7 @@ def import_historical_news(
         "months_done": done_count,
         "months_total": len(windows),
         "months_remaining": len(windows) - done_count,
+        "keys_exhausted": len(exhausted_keys),
     }
 
 
@@ -212,6 +248,11 @@ def main():
         f"{stats['imported']} notícias relevantes importadas."
     )
     print(f"[import_historical_news] {stats['months_done']}/{stats['months_total']} meses concluídos.")
+    if stats["keys_exhausted"] > 0:
+        print(
+            f"[import_historical_news] {stats['keys_exhausted']}/{len(api_keys)} chave(s) "
+            "atingiram o limite diário — parou graciosamente, progresso guardado."
+        )
     if stats["months_remaining"] > 0:
         print(
             f"[import_historical_news] {stats['months_remaining']} meses por fazer — "

@@ -176,6 +176,77 @@ class TestImportHistoricalNews:
         assert stats["requests_made"] == 0
         assert stats["months_remaining"] == 0
 
+    def test_rate_limit_rotates_to_next_key_and_retries_same_month(self, memory_db, monkeypatch, tmp_path):
+        calls = []
+
+        def fake_fetch(api_key, time_from, time_to, limit=1000):
+            calls.append(api_key)
+            if api_key == "key-a":
+                raise ihn.RateLimitError("our standard API rate limit is 25 requests per day")
+            return [_article(time_published=f"{time_from[:8]}T120000")]
+
+        monkeypatch.setattr(ihn, "_fetch_window", fake_fetch)
+        state_path = tmp_path / "state.json"
+
+        stats = ihn.import_historical_news(
+            "EUR/USD",
+            datetime(2023, 1, 1, tzinfo=timezone.utc),
+            datetime(2023, 2, 1, tzinfo=timezone.utc),
+            api_keys=["key-a", "key-b"],
+            state_path=state_path,
+            sleep_seconds=0,
+        )
+
+        assert calls == ["key-a", "key-b"]  # key-a esgotada, roda para key-b
+        assert stats["months_done"] == 1
+        assert stats["keys_exhausted"] == 1
+
+    def test_all_keys_exhausted_stops_gracefully_without_marking_month_done(self, memory_db, monkeypatch, tmp_path):
+        def fake_fetch(api_key, time_from, time_to, limit=1000):
+            raise ihn.RateLimitError("standard API rate limit is 25 requests per day")
+
+        monkeypatch.setattr(ihn, "_fetch_window", fake_fetch)
+        state_path = tmp_path / "state.json"
+
+        stats = ihn.import_historical_news(
+            "EUR/USD",
+            datetime(2023, 1, 1, tzinfo=timezone.utc),
+            datetime(2023, 2, 1, tzinfo=timezone.utc),
+            api_keys=["key-a", "key-b"],
+            state_path=state_path,
+            sleep_seconds=0,
+        )
+
+        assert stats["months_done"] == 0
+        assert stats["months_remaining"] == 1
+        assert stats["keys_exhausted"] == 2
+
+    def test_non_rate_limit_information_message_raises_runtime_error(self, memory_db, monkeypatch):
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"Information": "Invalid API call, please check the parameters."}
+
+        monkeypatch.setattr(ihn.requests, "get", lambda *a, **k: FakeResponse())
+
+        with pytest.raises(RuntimeError):
+            ihn._fetch_window("fake-key", "20230101T0000", "20230201T0000")
+
+    def test_rate_limit_information_message_raises_rate_limit_error(self, memory_db, monkeypatch):
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"Information": "our standard API rate limit is 25 requests per day"}
+
+        monkeypatch.setattr(ihn.requests, "get", lambda *a, **k: FakeResponse())
+
+        with pytest.raises(ihn.RateLimitError):
+            ihn._fetch_window("fake-key", "20230101T0000", "20230201T0000")
+
     def test_db_path_override_writes_to_alternate_file(self, memory_db, monkeypatch, tmp_path):
         from modules import database
 

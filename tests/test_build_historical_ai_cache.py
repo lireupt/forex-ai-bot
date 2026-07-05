@@ -114,6 +114,45 @@ class TestBuildHistoricalAiCache:
         assert stats["days_processed"] == 3
         assert stats["days_remaining"] == 6
 
+    def test_failed_day_does_not_advance_state_and_stops_loop(self, memory_db, monkeypatch, tmp_path):
+        _seed_candles(memory_db, days=10)
+        calls = []
+
+        def fake_analyse(news, events, pair, technical=None, macro_context_snapshot=None):
+            calls.append(1)
+            if len(calls) == 2:
+                return {**FAKE_AI_RESULT, "status": "failed"}
+            return dict(FAKE_AI_RESULT)
+
+        monkeypatch.setattr(bhac, "analyse_ai", fake_analyse)
+        state_path = tmp_path / "state.json"
+
+        stats = bhac.build_historical_ai_cache(
+            "EUR/USD",
+            datetime(2023, 1, 1, tzinfo=timezone.utc),
+            datetime(2023, 1, 10, tzinfo=timezone.utc),
+            candle_provider="import",
+            token_budget=100 * bhac.ESTIMATED_TOKENS_PER_CALL,
+            state_path=state_path,
+        )
+
+        # dia 1 (01-01) ok, dia 2 (01-02) falha -> pára sem avançar o estado
+        assert stats["calls_made"] == 1
+        assert stats["failed"] == 1
+        state = json.loads(state_path.read_text())
+        assert state["last_day"] == "2023-01-01T00:00:00+00:00"
+
+        # a próxima corrida tenta o dia 01-02 de novo (não foi saltado)
+        stats2 = bhac.build_historical_ai_cache(
+            "EUR/USD",
+            datetime(2023, 1, 1, tzinfo=timezone.utc),
+            datetime(2023, 1, 10, tzinfo=timezone.utc),
+            candle_provider="import",
+            token_budget=100 * bhac.ESTIMATED_TOKENS_PER_CALL,
+            state_path=state_path,
+        )
+        assert stats2["failed"] == 0  # desta vez a chamada teve sucesso (calls[2] não é a 2ª global)
+
     def test_resumes_from_state_file(self, memory_db, monkeypatch, tmp_path):
         _seed_candles(memory_db, days=10)
 
