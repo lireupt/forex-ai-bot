@@ -157,6 +157,63 @@ class TestEnvFallback:
         assert run_row["config"]["sl_mult"] == 3.0
 
 
+class TestMacroShapedEvents:
+    """Regressão: get_macro_risk()/ai_analyst esperam eventos no formato
+    ff_calendar (date/time/currency/event/impact). database.get_high_impact_
+    events() devolve title/country/event_time (formato de tabela) — sem
+    conversão, get_macro_risk() detecta ausência de 'date' e substitui os
+    eventos point-in-time pelo calendário real de "esta semana" via scrape
+    ao vivo, uma fuga de futuro silenciosa."""
+
+    def test_shapes_db_row_into_ff_calendar_format(self):
+        rows = [{
+            "title": "Core CPI", "country": "USD", "impact": "high",
+            "event_time": "2023-06-15T12:30:00+00:00", "source": "test",
+        }]
+        shaped = br._to_macro_shaped_events(rows)
+        assert shaped == [{
+            "date": "2023-06-15",
+            "time": "2023-06-15T12:30:00+00:00",
+            "currency": "USD",
+            "impact": "high",
+            "event": "Core CPI",
+        }]
+
+    def test_get_macro_risk_never_falls_back_to_live_calendar(self, memory_db, monkeypatch):
+        from modules import macro_filter, database
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("get_macro_risk não devia recorrer ao scrape ao vivo num backtest")
+
+        monkeypatch.setattr("modules.ff_calendar.fetch_this_week", _boom)
+
+        memory_db.execute(
+            "INSERT INTO economic_events (title, country, impact, event_time, source, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("Core CPI", "USD", "high", "2023-06-15T12:30:00+00:00", "test", "2023-06-15T00:00:00+00:00"),
+        )
+        memory_db.commit()
+
+        provider = br.HistoricalProvider(memory_db, "EUR/USD")
+        result = macro_filter.get_macro_risk(
+            "EUR/USD", datetime(2023, 6, 15, 12, 0, tzinfo=timezone.utc),
+            events=provider.macro_events(),
+        )
+        assert result["macro_risk_level"] in ("none", "medium", "high")
+
+    def test_high_impact_events_keeps_raw_shape_for_gate_check(self, memory_db):
+        memory_db.execute(
+            "INSERT INTO economic_events (title, country, impact, event_time, source, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("Core CPI", "USD", "high", "2023-06-15T12:30:00+00:00", "test", "2023-06-15T00:00:00+00:00"),
+        )
+        memory_db.commit()
+        provider = br.HistoricalProvider(memory_db, "EUR/USD")
+        raw = provider.high_impact_events()
+        assert raw[0]["title"] == "Core CPI"
+        assert raw[0]["event_time"] == "2023-06-15T12:30:00+00:00"
+
+
 class TestRowsToDf:
     """Regressão: uma candle 1d gravada por outra parte do sistema (provider
     'yahoo') com candle_time sem offset de fuso partia pd.to_datetime()

@@ -52,6 +52,29 @@ PERFORMANCE_LOOKBACK = 200
 COOLDOWN_LOOKBACK_HOURS = 24 * 3  # margem generosa acima do dia UTC + cooldown default
 
 
+def _to_macro_shaped_events(rows):
+    """`modules.macro_filter.get_macro_risk()` e `modules.ai_analyst` esperam
+    eventos no formato do `ff_calendar` (chaves `date`/`time`/`currency`/
+    `event`/`impact`) — se nenhum evento tiver `date`, get_macro_risk()
+    ignora silenciosamente o que lhe é passado e vai buscar o calendário
+    real de "esta semana" via scrape ao vivo (fuga de futuro num backtest).
+    `database.get_high_impact_events()` devolve as linhas cruas da tabela
+    (`title`/`country`/`event_time`) — convertidas aqui para o formato
+    esperado, sem tocar no formato usado por `decision_engine.resolve_event_gate`
+    (que continua a ler as linhas cruas via `ctx.high_impact_events`)."""
+    shaped = []
+    for row in rows:
+        event_time = row.get("event_time") or ""
+        shaped.append({
+            "date": event_time[:10] if event_time else "",
+            "time": event_time,
+            "currency": row.get("country") or "",
+            "impact": row.get("impact") or "",
+            "event": row.get("title") or "",
+        })
+    return shaped
+
+
 def _rows_to_df(rows):
     if not rows:
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
@@ -84,6 +107,7 @@ class HistoricalProvider:
         self.pair = pair
         self.candle_provider = candle_provider
         self._high_impact_events = database.get_high_impact_events(conn)
+        self._macro_events = _to_macro_shaped_events(self._high_impact_events)
 
     def candles_up_to(self, timeframe, before_dt, count=LOOKBACK_BARS):
         bar_hours = TIMEFRAME_HOURS.get(timeframe, 1)
@@ -104,7 +128,13 @@ class HistoricalProvider:
         # Estático para toda a corrida — os eventos calendarizados são
         # legitimamente conhecidos com antecedência (não é fuga de futuro:
         # é o próprio decide()/macro_filter que decide se estão "perto").
+        # Formato cru da tabela — usado por decision_engine.resolve_event_gate.
         return self._high_impact_events
+
+    def macro_events(self):
+        # Mesmos eventos, formato ff_calendar — usado por
+        # get_macro_risk()/ai_analyst (ctx.events).
+        return self._macro_events
 
 
 class BacktestState:
@@ -228,7 +258,7 @@ def run_backtest(pair, date_from, date_to, config=None, db_path=None, ai_result_
             now=t,
             pair_spec=pair_spec,
             candles_by_timeframe=candles_by_tf,
-            events=provider.high_impact_events(),
+            events=provider.macro_events(),
             high_impact_events=provider.high_impact_events(),
             ai_result=ai_result,  # None -> Fase A (decision_engine.DEFAULT_AI_RESULT, ai_score=0)
             news_score=0.0,
